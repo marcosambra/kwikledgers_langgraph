@@ -1,0 +1,49 @@
+name: Python Tests
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/python-tests.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/python-tests.yml"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install poetry
+
+      - name: Install package dependencies
+        run: poetry install
+
+      - name: Run unit tests
+        run: poetry run python -m unittest discover -s tests
+
+      - name: Validate daily summary CLI
+        run: poetry run kwikledgers-langgraph --help
+
+      - name: Validate story PR CLI
+        run: poetry run kwikledgers-langgraph-story-pr --help
