@@ -3,7 +3,7 @@ name = "kwikledgers-langgraph"
 version = "0.1.0"
 description = "Parallel LangGraph runtime scaffold for KwikLedgers orchestration."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<4.0"
 authors = [
     { name = "KwikLedgers", email = "dev@kwikledgers.com" }
 ]
@@ -20,6 +20,9 @@ kwikledgers-langgraph-story-pr = "kwikledgers_langgraph.story_pr_cli:main"
 
 [tool.poetry]
 packages = [{ include = "kwikledgers_langgraph", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

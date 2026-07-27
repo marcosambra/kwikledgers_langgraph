@@ -109,6 +109,36 @@ O primeiro fluxo mutavel agora existe para PR de story, mas segue preview-first:
 - o CLI dedicado aceita `--approve-create` apenas como simulacao local apos o preview,
 	nao como aprovacao real de producao
 
+Fluxo operacional da CLI de PR da story:
+
+```bash
+poetry run kwikledgers-langgraph-story-pr \
+	--story-id 120204 \
+	--repository-name accounting \
+	--source-branch feature/KL-120204-balance-sheet-by-class \
+	--what-was-changed "Resumo formal da alteracao" \
+	--affected-processes "Fluxo de PR da story" \
+	--expected-impacts "Maior previsibilidade do runtime" \
+	--important-points "Validar preview e aprovacao" \
+	--mermaid-diagram "graph TD; A-->B;" \
+	--save-state-file /tmp/story-pr-preview.json \
+	--print-state
+```
+
+- o primeiro comando gera o preview e grava o estado final completo, incluindo `pull_request_preview`, `pending_approval.request_id` e `observability.active_run_id`
+- a aprovacao humana deve acontecer fora do runtime e referenciar o `request_id` exibido no estado salvo
+
+```bash
+poetry run kwikledgers-langgraph-story-pr \
+	--resume-state-file /tmp/story-pr-preview.json \
+	--approval-request-id REQUEST_ID_APROVADO \
+	--save-state-file /tmp/story-pr-final.json \
+	--print-state
+```
+
+- o segundo comando reaproveita o mesmo estado serializado para preservar preview, `request_id` e `active_run_id`
+- a retomada real depende desse mesmo arquivo de estado; reiniciar a CLI com um estado novo invalida o vinculo exigido pelo guardrail
+
 ## Proximo passo natural
 
 Expandir o mesmo padrao preview-first para outros fluxos mutaveis, como
