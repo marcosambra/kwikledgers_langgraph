@@ -8,11 +8,7 @@ from typing import Any, cast
 from kwikledgers_langgraph.adapters import StoryPullRequestPorts
 from kwikledgers_langgraph.guardrails import build_approval_confirmation
 from kwikledgers_langgraph.legacy_adapters import LegacyStoryPullRequestAdapter
-from kwikledgers_langgraph.observability import (
-    build_langsmith_trace_outputs,
-    build_observability_context,
-    trace_runtime_execution,
-)
+from kwikledgers_langgraph.observability import build_observability_context
 from kwikledgers_langgraph.runtime import build_story_pull_request_runtime
 from kwikledgers_langgraph.state import AgentState, StoryPullRequestRequest
 
@@ -156,11 +152,7 @@ def run_story_pull_request(arguments: argparse.Namespace) -> dict[str, Any]:
     runtime = build_story_pull_request_runtime(
         StoryPullRequestPorts(pull_requests=LegacyStoryPullRequestAdapter())
     )
-    state = _build_runtime_state(arguments)
-    with trace_runtime_execution(state) as traced_run:
-        result = runtime.invoke(state)
-        if traced_run is not None:
-            traced_run.end(outputs=build_langsmith_trace_outputs(result))
+    result = runtime.invoke(_build_runtime_state(arguments))
     if not isinstance(result, dict):
         raise RuntimeError("O runtime de PR da story retornou um estado final invalido.")
     return result

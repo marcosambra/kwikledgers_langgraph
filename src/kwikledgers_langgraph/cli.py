@@ -12,11 +12,7 @@ from kwikledgers_langgraph.legacy_adapters import (
     LegacyTrackingSyncAdapter,
     NoOpNotificationAdapter,
 )
-from kwikledgers_langgraph.observability import (
-    build_langsmith_trace_outputs,
-    build_observability_context,
-    trace_runtime_execution,
-)
+from kwikledgers_langgraph.observability import build_observability_context
 from kwikledgers_langgraph.runtime import build_daily_summary_runtime
 from kwikledgers_langgraph.state import AgentState
 
@@ -46,10 +42,7 @@ def _build_ports(notifications_enabled: bool) -> DailySummaryPorts:
 def run_daily_summary(*, source: str, notifications_enabled: bool) -> dict[str, Any]:
     runtime = build_daily_summary_runtime(_build_ports(notifications_enabled))
     state = _build_initial_state(source, notifications_enabled)
-    with trace_runtime_execution(state) as traced_run:
-        result = runtime.invoke(state)
-        if traced_run is not None:
-            traced_run.end(outputs=build_langsmith_trace_outputs(result))
+    result = runtime.invoke(state)
     if not isinstance(result, dict):
         raise RuntimeError("O runtime LangGraph retornou um estado final invalido.")
     return result

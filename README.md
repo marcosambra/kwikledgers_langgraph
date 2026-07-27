@@ -33,24 +33,6 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 - `KWIKLEDGERS_USER_EMAIL`: email explicito do usuario atual para o seam de identidade do runtime novo.
 - `KWIKLEDGERS_USER_DISPLAY_NAME`: nome exibido do usuario atual quando a identidade for resolvida por ambiente.
 
-Variaveis de ambiente suportadas para tracing externo com LangSmith:
-
-- `KWIKLEDGERS_LANGSMITH_ENABLED`: habilita o tracing externo do runtime quando estiver como `true`.
-- `KWIKLEDGERS_LANGSMITH_PROJECT`: nome do projeto do LangSmith para os runs deste runtime.
-- `LANGSMITH_API_KEY`: chave local do LangSmith; nao deve ser commitada.
-- `LANGSMITH_ENDPOINT`: endpoint HTTP da API do LangSmith, quando nao usar o padrao cloud.
-- `LANGSMITH_PROJECT`: alternativa padrao da SDK caso voce nao use o prefixo `KWIKLEDGERS_`.
-- `LANGSMITH_TRACING` ou `LANGSMITH_TRACING_V2`: alternativas da SDK aceitas como sinal explicito de tracing.
-
-Exemplo local sem commitar segredo:
-
-```bash
-cp .env.langsmith.example .env.langsmith.local
-export $(grep -v '^#' .env.langsmith.local | xargs)
-```
-
-Preencha `LANGSMITH_API_KEY` localmente antes de exportar o arquivo.
-
 ## Estrutura inicial
 
 - `src/kwikledgers_langgraph/state.py`: contrato tipado do estado compartilhado
@@ -110,12 +92,6 @@ O runtime novo agora registra em codigo:
 - decisao de guardrail para cada etapa do fluxo
 - `correlation_id` e `active_run_id` por execucao
 - timeline de eventos por node no estado compartilhado
-
-Quando LangSmith estiver habilitado por ambiente, as CLIs tambem abrem um run
-raiz por execucao com metadata minima do fluxo:
-- `flow_name`, `source`, `correlation_id` e `active_run_id`
-- `story_id` e `repository_name` apenas quando o fluxo for de PR da story
-- nenhum email bruto, payload secreto ou `LANGSMITH_API_KEY` entra no estado tipado, tracking ou metadata serializada
 
 O fluxo `daily_summary` agora tambem aceita um seam real de identidade:
 - preserva `user_identity` quando ela ja vem do estado
