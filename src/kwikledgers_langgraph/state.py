@@ -70,6 +70,14 @@ class ObservabilityEvent(TypedDict, total=False):
     payload: dict[str, Any]
 
 
+class ExternalTracingContext(TypedDict, total=False):
+    provider: str
+    enabled: bool
+    project_name: str
+    api_key_configured: bool
+    reason: str
+
+
 class ObservabilityContext(TypedDict, total=False):
     correlation_id: str
     active_run_id: str
@@ -77,6 +85,7 @@ class ObservabilityContext(TypedDict, total=False):
     source: str
     decisions: list[str]
     timeline: list[ObservabilityEvent]
+    external_tracing: ExternalTracingContext
 
 
 class AgentState(TypedDict, total=False):
