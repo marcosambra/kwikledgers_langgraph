@@ -35,6 +35,16 @@ class FakeStoryPullRequestAdapter:
         }
 
 
+class FailingPreviewStoryPullRequestAdapter(FakeStoryPullRequestAdapter):
+    def preview_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("preview boom")
+
+
+class FailingCreateStoryPullRequestAdapter(FakeStoryPullRequestAdapter):
+    def create_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("create boom")
+
+
 def _base_state() -> dict[str, Any]:
     return {
         "tracking_events": [],
@@ -86,6 +96,19 @@ class StoryPullRequestGraphTestCase(unittest.TestCase):
         self.assertFalse(result["pending_approval"]["approved"])
         self.assertTrue(result["pending_approval"]["request_id"])
         self.assertEqual(result["pull_request_preview"]["title"], "KL-120204 Draft PR")
+        self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_create")
+
+    def test_preview_adapter_failure_stops_cleanly(self) -> None:
+        adapter = FailingPreviewStoryPullRequestAdapter()
+        runtime = build_story_pull_request_graph(
+            StoryPullRequestPorts(pull_requests=adapter)
+        )
+
+        result = runtime.invoke(_base_state())
+
+        self.assertIn("errors", result)
+        self.assertEqual(result["pull_request_result"]["status"], "preview_failed")
+        self.assertEqual(adapter.create_calls, [])
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_create")
 
     def test_replayed_preview_with_matching_confirmation_allows_create(self) -> None:
@@ -164,3 +187,34 @@ class StoryPullRequestGraphTestCase(unittest.TestCase):
         self.assertEqual(len(adapter.create_calls), 1)
         self.assertTrue(result["pending_approval"]["approved"])
         self.assertEqual(result["pending_approval"]["approval_source"], "local_cli_simulation")
+
+    def test_execute_adapter_failure_sets_failed_result(self) -> None:
+        adapter = FailingCreateStoryPullRequestAdapter()
+        runtime = build_story_pull_request_graph(
+            StoryPullRequestPorts(pull_requests=adapter)
+        )
+        state = _base_state()
+        preview = {
+            "title": "KL-120204 Draft PR",
+            "story_id": state["pull_request_request"]["story_id"],
+        }
+        state["pull_request_preview"] = preview
+        state["pending_approval"] = build_bound_approval(
+            state,
+            action="story_pull_request.create",
+            preview=preview,
+            approved=False,
+            approval_source="pending_review",
+        )
+        state["approval_confirmation"] = build_approval_confirmation(
+            request_id=state["pending_approval"]["request_id"],
+            approved=True,
+            approval_source="test",
+        )
+
+        result = runtime.invoke(state)
+
+        self.assertIn("errors", result)
+        self.assertEqual(result["pull_request_result"]["status"], "execute_failed")
+        self.assertEqual(result["observability"]["timeline"][-1]["node"], "create_pull_request")
+        self.assertEqual(result["observability"]["timeline"][-1]["status"], "failed")

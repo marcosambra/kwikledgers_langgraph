@@ -32,6 +32,22 @@ class StoryPullRequestPort(Protocol):
         """Execute the story draft pull request creation."""
 
 
+class StoryBranchAssociationPort(Protocol):
+    def preview_story_branch_association(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return a normalized preview payload for a story branch association."""
+
+    def associate_story_branch(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Execute the story branch association."""
+
+
+class StoryStatusTransitionPort(Protocol):
+    def preview_story_status_transition(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return a normalized preview payload for a story status transition."""
+
+    def update_story_status(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Execute the story status transition."""
+
+
 @dataclass(frozen=True)
 class DailySummaryPorts:
     provider: DailySummaryProvider
@@ -43,3 +59,13 @@ class DailySummaryPorts:
 @dataclass(frozen=True)
 class StoryPullRequestPorts:
     pull_requests: StoryPullRequestPort
+
+
+@dataclass(frozen=True)
+class StoryBranchAssociationPorts:
+    branches: StoryBranchAssociationPort
+
+
+@dataclass(frozen=True)
+class StoryStatusTransitionPorts:
+    statuses: StoryStatusTransitionPort

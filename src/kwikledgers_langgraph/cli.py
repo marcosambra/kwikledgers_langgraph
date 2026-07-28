@@ -12,7 +12,7 @@ from kwikledgers_langgraph.legacy_adapters import (
     LegacyTrackingSyncAdapter,
     NoOpNotificationAdapter,
 )
-from kwikledgers_langgraph.observability import build_observability_context
+from kwikledgers_langgraph.observability import append_runtime_usage_metrics, build_observability_context
 from kwikledgers_langgraph.runtime import build_daily_summary_runtime
 from kwikledgers_langgraph.state import AgentState
 
@@ -48,6 +48,10 @@ def run_daily_summary(*, source: str, notifications_enabled: bool) -> dict[str, 
     return result
 
 
+def _record_runtime_observability(result: dict[str, Any]) -> None:
+    append_runtime_usage_metrics(result)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Executa o runtime LangGraph do resumo diario da KwikLedgers.")
     parser.add_argument("--source", default="langgraph-cli", help="Origem registrada no estado e no tracking.")
@@ -61,6 +65,11 @@ def main() -> int:
         action="store_true",
         help="Imprime o estado final completo em JSON.",
     )
+    parser.add_argument(
+        "--disable-observability-sync",
+        action="store_true",
+        help="Nao grava a observabilidade resumida do runtime em AI_Tracking/Metrics/ai-usage-log.md.",
+    )
     args = parser.parse_args()
 
     result = run_daily_summary(
@@ -70,6 +79,11 @@ def main() -> int:
 
     summary = result.get("summary", {})
     counts = summary.get("counts", {})
+    if not args.disable_observability_sync:
+        try:
+            _record_runtime_observability(result)
+        except RuntimeError as error:
+            print(f"Aviso: falha ao sincronizar observabilidade externa: {error}")
     print(
         "Runtime LangGraph executado com sucesso "
         f"para {counts.get('assigned_items', 0)} itens atribuídos e "

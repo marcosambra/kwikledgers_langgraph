@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from kwikledgers_langgraph.observability import build_observability_context, record_runtime_event
+from kwikledgers_langgraph.observability import (
+    append_runtime_usage_metrics,
+    build_observability_context,
+    build_runtime_usage_metrics_entry,
+    record_runtime_event,
+)
 
 
 class ObservabilityTestCase(unittest.TestCase):
@@ -38,6 +45,56 @@ class ObservabilityTestCase(unittest.TestCase):
         self.assertEqual(timeline[-1]["node"], "fetch_summary")
         self.assertEqual(timeline[-1]["status"], "completed")
         self.assertEqual(timeline[-1]["payload"]["counts"]["assigned_items"], 3)
+
+    def test_build_runtime_usage_metrics_entry_uses_minimal_operational_fields(self) -> None:
+        state = {
+            "source": "test",
+            "tracking_events": [{"category": "runtime", "message": "Fluxo iniciado."}],
+            "observability": build_observability_context(
+                flow_name="story_pull_request",
+                source="test",
+            ),
+        }
+        state.update(
+            record_runtime_event(
+                state,
+                node="stop_without_create",
+                status="completed",
+                message="Fluxo encerrado após preview.",
+            )
+        )
+
+        entry = build_runtime_usage_metrics_entry(state)
+
+        self.assertEqual(entry["title"], "runtime:story_pull_request:completed")
+        self.assertEqual(entry["summary"], "Fluxo encerrado após preview.")
+        self.assertTrue(any(action.startswith("run_id=") for action in entry["actions"]))
+
+    def test_append_runtime_usage_metrics_writes_ai_tracking_entry(self) -> None:
+        state = {
+            "source": "test",
+            "tracking_events": [],
+            "observability": build_observability_context(
+                flow_name="story_status_transition",
+                source="test",
+            ),
+        }
+        state.update(
+            record_runtime_event(
+                state,
+                node="execute_status_transition",
+                status="completed",
+                message="Transicao concluida.",
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracking_root = Path(temp_dir)
+            path = append_runtime_usage_metrics(state, tracking_root=tracking_root)
+            content = path.read_text(encoding="utf-8")
+
+        self.assertIn("runtime:story_status_transition:completed", content)
+        self.assertIn("Resumo: Transicao concluida.", content)
 
 
 if __name__ == "__main__":

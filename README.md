@@ -40,11 +40,16 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 - `src/kwikledgers_langgraph/legacy_adapters.py`: adapters de compatibilidade com o runtime atual
 - `src/kwikledgers_langgraph/guardrails.py`: gates explicitos de aprovacao e classificacao de operacoes
 - `src/kwikledgers_langgraph/observability.py`: correlation ID, run ID e timeline da execucao
+- `src/kwikledgers_langgraph/graphs/mutable_flow.py`: seam compartilhado para fluxos mutaveis preview-first
 - `src/kwikledgers_langgraph/graphs/daily_summary.py`: primeiro subgrafo
 - `src/kwikledgers_langgraph/graphs/story_pull_request.py`: fluxo de preview/aprovacao/criacao de PR da story
+- `src/kwikledgers_langgraph/graphs/story_branch_association.py`: fluxo de preview/aprovacao/associacao de branch da story
+- `src/kwikledgers_langgraph/graphs/story_status_transition.py`: fluxo de preview/aprovacao/transicao de status da story
 - `src/kwikledgers_langgraph/runtime.py`: fabrica de compilacao do runtime
 - `src/kwikledgers_langgraph/cli.py`: entrypoint manual do novo runtime
 - `src/kwikledgers_langgraph/story_pr_cli.py`: entrypoint dedicado ao fluxo de PR da story
+- `src/kwikledgers_langgraph/story_branch_cli.py`: entrypoint dedicado ao fluxo de associacao de branch da story
+- `src/kwikledgers_langgraph/story_status_cli.py`: entrypoint dedicado ao fluxo de transicao de status da story
 
 ## Execucao manual
 
@@ -67,6 +72,14 @@ poetry run kwikledgers-langgraph --help
 
 ```bash
 poetry run kwikledgers-langgraph-story-pr --help
+```
+
+```bash
+poetry run kwikledgers-langgraph-story-branch --help
+```
+
+```bash
+poetry run kwikledgers-langgraph-story-status --help
 ```
 
 ## Validacao rapida
@@ -92,6 +105,7 @@ O runtime novo agora registra em codigo:
 - decisao de guardrail para cada etapa do fluxo
 - `correlation_id` e `active_run_id` por execucao
 - timeline de eventos por node no estado compartilhado
+- emissao opcional de um resumo operacional em `AI_Tracking/Metrics/ai-usage-log.md`, consumivel pelo `kl_observatory`
 
 O fluxo `daily_summary` agora tambem aceita um seam real de identidade:
 - preserva `user_identity` quando ela ja vem do estado
@@ -108,6 +122,29 @@ O primeiro fluxo mutavel agora existe para PR de story, mas segue preview-first:
 - a criacao da PR so segue quando uma `approval_confirmation` separada reaproveita esse `request_id`, o preview anterior e o `active_run_id` da execucao
 - o CLI dedicado aceita `--approve-create` apenas como simulacao local apos o preview,
 	nao como aprovacao real de producao
+
+O fluxo de associacao de branch da story segue o mesmo contrato preview-first:
+- o preview da associacao sempre roda como leitura
+- o runtime persiste `branch_association_preview`, `pending_approval.request_id` e `observability.active_run_id`
+- a associacao real so acontece quando uma retomada explicita usa o mesmo arquivo de estado salvo e o mesmo `request_id`
+- o CLI dedicado aceita `--approve-association` apenas como simulacao local para teste
+
+O fluxo de transicao de status da story segue o mesmo contrato preview-first:
+- o preview da transicao sempre roda como leitura e valida a proxima etapa do fluxo canonico
+- o runtime persiste `story_status_preview`, `pending_approval.request_id` e `observability.active_run_id`
+- a execucao real revalida status atual e revisao sintetizada antes de aplicar a mudanca
+- o CLI dedicado aceita `--approve-transition` apenas como simulacao local para teste
+
+Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
+- validacao minima de request obrigatorio
+- preview read-only com tratamento uniforme de falha de adapter
+- approval gate padronizado com `request_id`, `preview` e `active_run_id`
+- execute com tratamento uniforme de falha e resultado operacional minimo
+
+Observabilidade externa minima:
+- por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`
+- esse resumo reaproveita o formato que o `kl_observatory` ja parseia, sem acoplar o runtime ao banco/API do observatory
+- use `--disable-observability-sync` quando quiser rodar a CLI sem emitir esse evento externo
 
 Fluxo operacional da CLI de PR da story:
 
@@ -139,7 +176,53 @@ poetry run kwikledgers-langgraph-story-pr \
 - o segundo comando reaproveita o mesmo estado serializado para preservar preview, `request_id` e `active_run_id`
 - a retomada real depende desse mesmo arquivo de estado; reiniciar a CLI com um estado novo invalida o vinculo exigido pelo guardrail
 
+Fluxo operacional da CLI de associacao de branch da story:
+
+```bash
+poetry run kwikledgers-langgraph-story-branch \
+	--story-id 120204 \
+	--repository-name accounting \
+	--source-branch feature/KL-120204-balance-sheet-by-class \
+	--save-state-file /tmp/story-branch-preview.json \
+	--print-state
+```
+
+- o primeiro comando gera o preview e grava o estado final com `branch_association_preview`, `pending_approval.request_id` e `observability.active_run_id`
+
+```bash
+poetry run kwikledgers-langgraph-story-branch \
+	--resume-state-file /tmp/story-branch-preview.json \
+	--approval-request-id REQUEST_ID_APROVADO \
+	--save-state-file /tmp/story-branch-final.json \
+	--print-state
+```
+
+- a retomada da associacao real exige o mesmo arquivo de estado e o `request_id` aprovado externamente
+
+Fluxo operacional da CLI de transicao de status da story:
+
+```bash
+poetry run kwikledgers-langgraph-story-status \
+	--story-id 120204 \
+	--target-status "Aguardando PR" \
+	--expected-current-status "Desenvolvimento" \
+	--save-state-file /tmp/story-status-preview.json \
+	--print-state
+```
+
+- o primeiro comando gera o preview e grava o estado final com `story_status_preview`, `pending_approval.request_id` e `observability.active_run_id`
+
+```bash
+poetry run kwikledgers-langgraph-story-status \
+	--resume-state-file /tmp/story-status-preview.json \
+	--approval-request-id REQUEST_ID_APROVADO \
+	--save-state-file /tmp/story-status-final.json \
+	--print-state
+```
+
+- a retomada da transicao real exige o mesmo arquivo de estado e o `request_id` aprovado externamente
+
 ## Proximo passo natural
 
-Expandir o mesmo padrao preview-first para outros fluxos mutaveis, como
-associacao de branch e transicao de status da story.
+Evoluir a emissao de observabilidade minima para sinais mais ricos no stack,
+sem perder o contrato enxuto de preview, tracking e timeline.

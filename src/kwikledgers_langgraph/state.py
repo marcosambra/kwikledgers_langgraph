@@ -42,6 +42,20 @@ class StoryPullRequestRequest(TypedDict, total=False):
     new_queue_or_command: str
 
 
+class StoryBranchAssociationRequest(TypedDict, total=False):
+    story_id: int
+    repository_name: str
+    source_branch: str
+    related_work_item_ids: list[int]
+    include_child_work_items: bool
+
+
+class StoryStatusTransitionRequest(TypedDict, total=False):
+    story_id: int
+    target_status: str
+    expected_current_status: str
+
+
 class ApprovalRequest(TypedDict, total=False):
     action: str
     preview: dict[str, Any]
@@ -81,10 +95,15 @@ class ObservabilityContext(TypedDict, total=False):
 
 class AgentState(TypedDict, total=False):
     user_identity: UserIdentityContext
-    story: StoryContext
     pull_request_request: StoryPullRequestRequest
     pull_request_preview: dict[str, Any]
     pull_request_result: dict[str, Any]
+    branch_association_request: StoryBranchAssociationRequest
+    branch_association_preview: dict[str, Any]
+    branch_association_result: dict[str, Any]
+    story_status_request: StoryStatusTransitionRequest
+    story_status_preview: dict[str, Any]
+    story_status_result: dict[str, Any]
     pending_approval: ApprovalRequest
     approval_confirmation: ApprovalConfirmation
     approval_resume_ready: bool

@@ -8,7 +8,7 @@ from typing import Any, cast
 from kwikledgers_langgraph.adapters import StoryPullRequestPorts
 from kwikledgers_langgraph.guardrails import build_approval_confirmation
 from kwikledgers_langgraph.legacy_adapters import LegacyStoryPullRequestAdapter
-from kwikledgers_langgraph.observability import build_observability_context
+from kwikledgers_langgraph.observability import append_runtime_usage_metrics, build_observability_context
 from kwikledgers_langgraph.runtime import build_story_pull_request_runtime
 from kwikledgers_langgraph.state import AgentState, StoryPullRequestRequest
 
@@ -158,6 +158,10 @@ def run_story_pull_request(arguments: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def _record_runtime_observability(result: dict[str, Any]) -> None:
+    append_runtime_usage_metrics(result)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -232,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Imprime o estado final completo em JSON.",
     )
+    parser.add_argument(
+        "--disable-observability-sync",
+        action="store_true",
+        help="Nao grava a observabilidade resumida do runtime em AI_Tracking/Metrics/ai-usage-log.md.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -245,6 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(error))
 
     final_status = result.get("pull_request_result", {}).get("status", "completed")
+    if not args.disable_observability_sync:
+        try:
+            _record_runtime_observability(result)
+        except RuntimeError as error:
+            print(f"Aviso: falha ao sincronizar observabilidade externa: {error}")
     print(f"Fluxo de PR da story executado com status '{final_status}'.")
     if args.save_state_file:
         _write_state_file(result, args.save_state_file)

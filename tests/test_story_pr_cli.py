@@ -218,7 +218,8 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
             ]
 
             with patch("kwikledgers_langgraph.story_pr_cli.run_story_pull_request", return_value=result):
-                exit_code = main(argv)
+                with patch("kwikledgers_langgraph.story_pr_cli._record_runtime_observability"):
+                    exit_code = main(argv)
 
             with open(state_file, "r", encoding="utf-8") as saved_file:
                 saved_state = json.load(saved_file)

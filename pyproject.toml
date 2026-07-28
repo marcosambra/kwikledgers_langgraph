@@ -17,6 +17,8 @@ dependencies = [
 [project.scripts]
 kwikledgers-langgraph = "kwikledgers_langgraph.cli:main"
 kwikledgers-langgraph-story-pr = "kwikledgers_langgraph.story_pr_cli:main"
+kwikledgers-langgraph-story-branch = "kwikledgers_langgraph.story_branch_cli:main"
+kwikledgers-langgraph-story-status = "kwikledgers_langgraph.story_status_cli:main"
 
 [tool.poetry]
 packages = [{ include = "kwikledgers_langgraph", from = "src" }]

@@ -47,3 +47,9 @@ jobs:
 
       - name: Validate story PR CLI
         run: poetry run kwikledgers-langgraph-story-pr --help
+
+      - name: Validate story branch CLI
+        run: poetry run kwikledgers-langgraph-story-branch --help
+
+      - name: Validate story status CLI
+        run: poetry run kwikledgers-langgraph-story-status --help
