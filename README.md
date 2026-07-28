@@ -88,6 +88,30 @@ poetry run kwikledgers-langgraph-story-status --help
 poetry run python -m unittest discover -s tests
 ```
 
+## Roadmap Visual
+
+```mermaid
+flowchart TD
+	A[Resolver identidade minima] --> B[Compilar daily_summary]
+	B --> C[Fluxo preview-first de PR da story]
+	C --> D[Fluxo preview-first de associacao de branch]
+	D --> E[Fluxo preview-first de transicao de status]
+	E --> F[Seam compartilhado dos fluxos mutaveis]
+	F --> G[Hardening de preview e execute com testes de erro]
+	G --> H[Observabilidade minima em AI_Tracking para kl_observatory]
+	H --> I[Observabilidade estruturada com spans e eventos ricos]
+	E --> J[Preview de status com revisao nativa do MCP legado]
+
+	classDef done fill:#1f7a1f,stroke:#9be29b,color:#f4fff4,stroke-width:2px;
+	classDef pending fill:#7a1f1f,stroke:#ff9b9b,color:#fff4f4,stroke-width:2px;
+
+	class A,B,C,D,E,F,G,H done;
+	class I,J pending;
+```
+
+- Verde: slices implementados e validados.
+- Vermelho: backlog restante relevante.
+
 Para executar com compatibilidade legada, o runtime novo importa os servidores
 atuais apenas como adapters e sem modificar nenhum arquivo do runtime legado.
 
