@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from kwikledgers_langgraph.adapters import StoryBranchAssociationPorts
 from kwikledgers_langgraph.story_branch_cli import (
     _build_initial_state,
     _build_request,
@@ -25,6 +26,7 @@ def _build_arguments(**overrides: object) -> argparse.Namespace:
         "repository_name": "accounting",
         "source_branch": "feature/KL-120204-balance-sheet-by-class",
         "source": "test-story-branch-cli",
+        "backend": None,
         "related_work_item_ids": [120205, 120206],
         "exclude_child_work_items": False,
         "approve_association": False,
@@ -89,6 +91,7 @@ class StoryBranchCliTestCase(unittest.TestCase):
         self.assertEqual(state["branch_association_request"]["story_id"], 120204)
         self.assertNotIn("pending_approval", state)
         self.assertEqual(state["observability"]["flow_name"], "story_branch_association")
+        self.assertEqual(state["observability"]["backend_name"], "legacy")
         self.assertEqual(state["observability"]["timeline"][0]["status"], "initialized")
 
     def test_build_initial_state_allows_explicit_local_approval_simulation(self) -> None:
@@ -151,6 +154,38 @@ class StoryBranchCliTestCase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_story_branch_association(arguments)
 
+    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
+        saved_state = {
+            "branch_association_request": {"story_id": 120204, "repository_name": "accounting"},
+            "branch_association_preview": {"story_id": 120204, "repository_name": "accounting"},
+            "pending_approval": {
+                "action": "story_branch_association.execute",
+                "preview": {"story_id": 120204, "repository_name": "accounting"},
+                "approved": False,
+                "request_id": "req-123",
+                "run_id": "run-123",
+                "approval_source": "pending_review",
+            },
+            "observability": {
+                "active_run_id": "run-123",
+                "flow_name": "story_branch_association",
+                "backend_name": "legacy",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_file = f"{temp_dir}/saved-state.json"
+            _write_state_file(saved_state, state_file)
+
+            with self.assertRaises(RuntimeError):
+                _build_runtime_state(
+                    _build_arguments(
+                        resume_state_file=state_file,
+                        approval_request_id="req-123",
+                        backend="fastmcp",
+                    )
+                )
+
     def test_main_writes_state_file_when_requested(self) -> None:
         result = {
             "branch_association_result": {"status": "approval_required"},
@@ -186,7 +221,10 @@ class StoryBranchCliTestCase(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = f"{temp_dir}/preview-state.json"
-            with patch("kwikledgers_langgraph.story_branch_cli.LegacyStoryBranchAssociationAdapter", return_value=adapter):
+            with patch(
+                "kwikledgers_langgraph.story_branch_cli.build_story_branch_association_ports",
+                return_value=StoryBranchAssociationPorts(branches=adapter),
+            ):
                 preview_result = run_story_branch_association(_build_arguments())
                 _write_state_file(preview_result, state_file)
 

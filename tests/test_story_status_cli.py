@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from kwikledgers_langgraph.adapters import StoryStatusTransitionPorts
 from kwikledgers_langgraph.story_status_cli import (
     _build_initial_state,
     _build_request,
@@ -25,6 +26,7 @@ def _build_arguments(**overrides: object) -> argparse.Namespace:
         "target_status": "Aguardando PR",
         "expected_current_status": "Desenvolvimento",
         "source": "test-story-status-cli",
+        "backend": None,
         "approve_transition": False,
         "resume_state_file": None,
         "approval_request_id": None,
@@ -92,6 +94,7 @@ class StoryStatusCliTestCase(unittest.TestCase):
         self.assertEqual(state["story_status_request"]["story_id"], 120204)
         self.assertNotIn("pending_approval", state)
         self.assertEqual(state["observability"]["flow_name"], "story_status_transition")
+        self.assertEqual(state["observability"]["backend_name"], "legacy")
         self.assertEqual(state["observability"]["timeline"][0]["status"], "initialized")
 
     def test_build_initial_state_allows_explicit_local_approval_simulation(self) -> None:
@@ -168,6 +171,52 @@ class StoryStatusCliTestCase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_story_status_transition(arguments)
 
+    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
+        saved_state = {
+            "story_status_request": {"story_id": 120204, "target_status": "Aguardando PR"},
+            "story_status_preview": {
+                "story_id": 120204,
+                "current_status": "Desenvolvimento",
+                "target_status": "Aguardando PR",
+                "transition_allowed": True,
+                "validation_messages": [],
+                "story_revision": "rev-1",
+            },
+            "pending_approval": {
+                "action": "story_status_transition.execute",
+                "preview": {
+                    "story_id": 120204,
+                    "current_status": "Desenvolvimento",
+                    "target_status": "Aguardando PR",
+                    "transition_allowed": True,
+                    "validation_messages": [],
+                    "story_revision": "rev-1",
+                },
+                "approved": False,
+                "request_id": "req-123",
+                "run_id": "run-123",
+                "approval_source": "pending_review",
+            },
+            "observability": {
+                "active_run_id": "run-123",
+                "flow_name": "story_status_transition",
+                "backend_name": "legacy",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_file = f"{temp_dir}/saved-state.json"
+            _write_state_file(saved_state, state_file)
+
+            with self.assertRaises(RuntimeError):
+                _build_runtime_state(
+                    _build_arguments(
+                        resume_state_file=state_file,
+                        approval_request_id="req-123",
+                        backend="fastmcp",
+                    )
+                )
+
     def test_main_writes_state_file_when_requested(self) -> None:
         result = {
             "story_status_result": {"status": "approval_required"},
@@ -201,7 +250,10 @@ class StoryStatusCliTestCase(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = f"{temp_dir}/preview-state.json"
-            with patch("kwikledgers_langgraph.story_status_cli.LegacyStoryStatusTransitionAdapter", return_value=adapter):
+            with patch(
+                "kwikledgers_langgraph.story_status_cli.build_story_status_transition_ports",
+                return_value=StoryStatusTransitionPorts(statuses=adapter),
+            ):
                 preview_result = run_story_status_transition(_build_arguments())
                 _write_state_file(preview_result, state_file)
 

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 from typing import Any, cast
 
-from kwikledgers_langgraph.adapters import StoryStatusTransitionPorts
+from kwikledgers_langgraph.backend_factory import build_story_status_transition_ports, resolve_backend_name
 from kwikledgers_langgraph.guardrails import build_approval_confirmation
-from kwikledgers_langgraph.legacy_adapters import LegacyStoryStatusTransitionAdapter
-from kwikledgers_langgraph.observability import append_runtime_usage_metrics, build_observability_context
+from kwikledgers_langgraph.observability import (
+    append_runtime_observability_artifacts,
+    build_observability_context,
+)
 from kwikledgers_langgraph.runtime import build_story_status_transition_runtime
 from kwikledgers_langgraph.state import AgentState, StoryStatusTransitionRequest
+from kwikledgers_langgraph.state_persistence import StateFileError, load_state_file, write_state_file
 
 
 class StoryStatusCliError(RuntimeError):
@@ -35,6 +37,7 @@ def _build_request(arguments: argparse.Namespace) -> StoryStatusTransitionReques
 
 
 def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
+    backend_name = resolve_backend_name(getattr(arguments, "backend", None))
     state: AgentState = {
         "source": arguments.source,
         "tracking_events": [],
@@ -42,6 +45,7 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
         "observability": build_observability_context(
             flow_name="story_status_transition",
             source=arguments.source,
+            backend_name=backend_name,
         ),
     }
     if arguments.approve_transition:
@@ -51,16 +55,9 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
 
 def _load_state_file(state_file_path: str) -> AgentState:
     try:
-        with Path(state_file_path).open("r", encoding="utf-8") as state_file:
-            payload = json.load(state_file)
-    except FileNotFoundError as error:
-        raise StoryStatusCliError(f"O arquivo de estado '{state_file_path}' nao foi encontrado.") from error
-    except json.JSONDecodeError as error:
-        raise StoryStatusCliError(f"O arquivo de estado '{state_file_path}' nao contem JSON valido.") from error
-
-    if not isinstance(payload, dict):
-        raise StoryStatusCliError("O arquivo de estado precisa conter um objeto JSON no nivel raiz.")
-    return cast(AgentState, payload)
+        return load_state_file(state_file_path)
+    except StateFileError as error:
+        raise StoryStatusCliError(str(error)) from error
 
 
 def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
@@ -94,6 +91,12 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
     if not observability.get("active_run_id"):
         raise StoryStatusCliError(
             "O estado salvo nao contem 'observability.active_run_id' para retomar a aprovacao real."
+        )
+    resumed_backend = str(observability.get("backend_name") or "").strip().lower()
+    requested_backend = resolve_backend_name(getattr(arguments, "backend", None))
+    if resumed_backend and requested_backend != resumed_backend:
+        raise StoryStatusCliError(
+            "O backend solicitado para a retomada nao corresponde ao backend registrado no preview salvo."
         )
 
     resumed_state: AgentState = dict(state)
@@ -135,16 +138,13 @@ def _build_runtime_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _write_state_file(state: dict[str, Any], state_file_path: str) -> None:
-    output_path = Path(state_file_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as state_file:
-        json.dump(state, state_file, indent=2, ensure_ascii=False)
-        state_file.write("\n")
+    write_state_file(state, state_file_path)
 
 
 def run_story_status_transition(arguments: argparse.Namespace) -> dict[str, Any]:
+    backend_name = resolve_backend_name(getattr(arguments, "backend", None))
     runtime = build_story_status_transition_runtime(
-        StoryStatusTransitionPorts(statuses=LegacyStoryStatusTransitionAdapter())
+        build_story_status_transition_ports(backend_name=backend_name)
     )
     result = runtime.invoke(_build_runtime_state(arguments))
     if not isinstance(result, dict):
@@ -153,7 +153,7 @@ def run_story_status_transition(arguments: argparse.Namespace) -> dict[str, Any]
 
 
 def _record_runtime_observability(result: dict[str, Any]) -> None:
-    append_runtime_usage_metrics(result)
+    append_runtime_observability_artifacts(result)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -172,6 +172,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Status atual esperado para reforcar a validacao do preview.",
     )
     parser.add_argument("--source", default="story-status-cli", help="Origem registrada no estado do runtime.")
+    parser.add_argument(
+        "--backend",
+        default=None,
+        help="Backend de integracao do runtime. O padrao atual e 'legacy'.",
+    )
     parser.add_argument(
         "--approve-transition",
         action="store_true",

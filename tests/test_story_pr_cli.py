@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from kwikledgers_langgraph.adapters import StoryPullRequestPorts
 from kwikledgers_langgraph.story_pr_cli import (
     _build_initial_state,
     _build_request,
@@ -30,6 +31,7 @@ def _build_arguments(**overrides: object) -> argparse.Namespace:
         "important_points": "Validar approval gate.",
         "mermaid_diagram": "graph TD; A-->B;",
         "source": "test-story-pr-cli",
+        "backend": None,
         "title": "KL-120204 Draft PR",
         "related_work_item_ids": [120205, 120206],
         "exclude_child_work_items": False,
@@ -102,6 +104,7 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
         self.assertEqual(state["pull_request_request"]["story_id"], 120204)
         self.assertNotIn("pending_approval", state)
         self.assertEqual(state["observability"]["flow_name"], "story_pull_request")
+        self.assertEqual(state["observability"]["backend_name"], "legacy")
         self.assertEqual(state["observability"]["timeline"][0]["status"], "initialized")
 
     def test_build_initial_state_allows_explicit_local_approval_simulation(self) -> None:
@@ -169,6 +172,38 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
                     )
                 )
 
+    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
+        saved_state = {
+            "pull_request_request": {"story_id": 120204, "repository_name": "accounting"},
+            "pull_request_preview": {"title": "KL-120204 Draft PR", "story_id": 120204},
+            "pending_approval": {
+                "action": "story_pull_request.create",
+                "preview": {"title": "KL-120204 Draft PR", "story_id": 120204},
+                "approved": False,
+                "request_id": "req-123",
+                "run_id": "run-123",
+                "approval_source": "pending_review",
+            },
+            "observability": {
+                "active_run_id": "run-123",
+                "flow_name": "story_pull_request",
+                "backend_name": "legacy",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_file = f"{temp_dir}/saved-state.json"
+            _write_state_file(saved_state, state_file)
+
+            with self.assertRaises(RuntimeError):
+                _build_runtime_state(
+                    _build_arguments(
+                        resume_state_file=state_file,
+                        approval_request_id="req-123",
+                        backend="fastmcp",
+                    )
+                )
+
     def test_run_story_pull_request_invokes_runtime_with_built_state(self) -> None:
         arguments = _build_arguments()
         runtime = FakeRuntime(result={"pull_request_result": {"status": "approval_required"}})
@@ -233,7 +268,10 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = f"{temp_dir}/preview-state.json"
-            with patch("kwikledgers_langgraph.story_pr_cli.LegacyStoryPullRequestAdapter", return_value=adapter):
+            with patch(
+                "kwikledgers_langgraph.story_pr_cli.build_story_pull_request_ports",
+                return_value=StoryPullRequestPorts(pull_requests=adapter),
+            ):
                 preview_result = run_story_pull_request(_build_arguments())
                 _write_state_file(preview_result, state_file)
 

@@ -30,6 +30,12 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 	`agent/mcp_servers` do workspace legado.
 - `KWIKLEDGERS_LEGACY_ROOT`: caminho absoluto para o root do workspace legado;
 	o adapter resolve `agent/mcp_servers` a partir dele.
+- `KWIKLEDGERS_LANGGRAPH_BACKEND`: backend de integracao selecionado para o runtime.
+	Hoje aceita `legacy` e `fastmcp`. O backend `legacy` segue como opcao completa;
+	`fastmcp` ja atende o provider Azure e o tracking local do fluxo `daily_summary`.
+- `KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY`: chave opcional para assinar com
+	HMAC os arquivos de estado salvos dos fluxos mutaveis. Quando definida, o
+	runtime tambem rejeita retomadas a partir de arquivos nao assinados.
 - `KWIKLEDGERS_USER_EMAIL`: email explicito do usuario atual para o seam de identidade do runtime novo.
 - `KWIKLEDGERS_USER_DISPLAY_NAME`: nome exibido do usuario atual quando a identidade for resolvida por ambiente.
 
@@ -82,6 +88,11 @@ poetry run kwikledgers-langgraph-story-branch --help
 poetry run kwikledgers-langgraph-story-status --help
 ```
 
+Todas as CLIs publicas tambem aceitam `--backend` para selecionar o backend de
+integracao em runtime. O valor padrao atual e `legacy`. O backend `fastmcp`
+permanece reservado para a migracao futura e hoje falha de forma explicita por
+capability ainda nao implementada.
+
 ## Validacao rapida
 
 ```bash
@@ -105,8 +116,7 @@ flowchart TD
 	classDef done fill:#1f7a1f,stroke:#9be29b,color:#f4fff4,stroke-width:2px;
 	classDef pending fill:#7a1f1f,stroke:#ff9b9b,color:#fff4f4,stroke-width:2px;
 
-	class A,B,C,D,E,F,G,H done;
-	class I,J pending;
+	class A,B,C,D,E,F,G,H,I,J done;
 ```
 
 - Verde: slices implementados e validados.
@@ -128,6 +138,7 @@ O runtime novo agora registra em codigo:
 - classificacao explicita das operacoes por tipo
 - decisao de guardrail para cada etapa do fluxo
 - `correlation_id` e `active_run_id` por execucao
+- `backend_name` persistido no contexto de observabilidade
 - timeline de eventos por node no estado compartilhado
 - emissao opcional de um resumo operacional em `AI_Tracking/Metrics/ai-usage-log.md`, consumivel pelo `kl_observatory`
 
@@ -156,19 +167,28 @@ O fluxo de associacao de branch da story segue o mesmo contrato preview-first:
 O fluxo de transicao de status da story segue o mesmo contrato preview-first:
 - o preview da transicao sempre roda como leitura e valida a proxima etapa do fluxo canonico
 - o runtime persiste `story_status_preview`, `pending_approval.request_id` e `observability.active_run_id`
-- a execucao real revalida status atual e revisao sintetizada antes de aplicar a mudanca
+- a execucao real revalida status atual e revisao nativa da story quando o adapter legado consegue acessar o cliente Azure, mantendo fallback compatível para parse sintetico apenas quando necessario
 - o CLI dedicado aceita `--approve-transition` apenas como simulacao local para teste
 
 Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
 - validacao minima de request obrigatorio
 - preview read-only com tratamento uniforme de falha de adapter
 - approval gate padronizado com `request_id`, `preview` e `active_run_id`
+- retomada que recusa trocar o backend entre preview salvo e execute retomado
+- suporte opcional a assinatura HMAC do arquivo de estado salvo para endurecer a integridade da retomada
 - execute com tratamento uniforme de falha e resultado operacional minimo
 
 Observabilidade externa minima:
 - por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`
+- no mesmo sync, o runtime tambem emite eventos estruturados em `AI_Tracking/Metrics/langgraph-runtime-events.jsonl`
+- o stream JSONL inclui `run_summary`, `timeline_event`, `decision`, `tracking_event` e `error`, sempre vinculados por `backend_name`, `correlation_id` e `active_run_id`
+- antes de persistir esses artefatos externos, o runtime reduz payloads e reda campos sensiveis como URLs, tokens, markdowns longos e mensagens brutas de erro
 - esse resumo reaproveita o formato que o `kl_observatory` ja parseia, sem acoplar o runtime ao banco/API do observatory
-- use `--disable-observability-sync` quando quiser rodar a CLI sem emitir esse evento externo
+- use `--disable-observability-sync` quando quiser rodar a CLI sem emitir nenhum desses artefatos externos
+
+Backend selector atual:
+- `legacy`: backend operacional completo para todos os fluxos atuais
+- `fastmcp`: backend disponivel para o provider Azure e o tracking local do fluxo `daily_summary`; notificacoes continuam no legado neste slice
 
 Fluxo operacional da CLI de PR da story:
 
@@ -248,5 +268,5 @@ poetry run kwikledgers-langgraph-story-status \
 
 ## Proximo passo natural
 
-Evoluir a emissao de observabilidade minima para sinais mais ricos no stack,
-sem perder o contrato enxuto de preview, tracking e timeline.
+Usar o backend selector ja entregue para conectar as primeiras capabilities
+reais do FastMCP sem mexer no contrato preview-first dos grafos atuais.

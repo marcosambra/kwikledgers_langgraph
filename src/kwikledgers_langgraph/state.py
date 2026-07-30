@@ -89,6 +89,7 @@ class ObservabilityContext(TypedDict, total=False):
     active_run_id: str
     flow_name: str
     source: str
+    backend_name: str
     decisions: list[str]
     timeline: list[ObservabilityEvent]
 

@@ -261,8 +261,10 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
         target_status = str(request["target_status"])
         expected_current_status = str(request.get("expected_current_status") or "").strip() or None
 
-        payload = azure_server._get_story_details(story_id)
-        details = self._parse_story_details(payload, story_id=story_id)
+        details = self._get_native_story_details(azure_server, story_id=story_id)
+        if details is None:
+            payload = azure_server._get_story_details(story_id)
+            details = self._parse_story_details(payload, story_id=story_id)
         current_status = details["current_status"]
         current_index = self._find_status_index(current_status)
         target_index = self._find_status_index(target_status)
@@ -346,6 +348,44 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
         if status in CANONICAL_STORY_STATUS_FLOW:
             return CANONICAL_STORY_STATUS_FLOW.index(status)
         return None
+
+    def _get_native_story_details(self, azure_server: Any, *, story_id: int) -> dict[str, Any] | None:
+        get_client = getattr(azure_server, "get_client", None)
+        if not callable(get_client):
+            return None
+
+        try:
+            connection = get_client()
+            wit = connection.clients.get_work_item_tracking_client()
+            item = wit.get_work_item(
+                id=story_id,
+                fields=[
+                    "System.Id",
+                    "System.Title",
+                    "System.State",
+                    "System.WorkItemType",
+                ],
+            )
+        except Exception:
+            return None
+
+        fields = getattr(item, "fields", {}) or {}
+        title = str(fields.get("System.Title") or "").strip()
+        current_status = str(fields.get("System.State") or "").strip()
+        if not title or not current_status:
+            return None
+
+        work_item_type = str(fields.get("System.WorkItemType") or "User Story").strip() or "User Story"
+        revision = getattr(item, "rev", None)
+        normalized_revision = str(revision).strip() if revision is not None else ""
+
+        return {
+            "title": title,
+            "current_status": current_status,
+            "work_item_type": work_item_type,
+            "url": getattr(item, "url", None),
+            "story_revision": normalized_revision or f"story-status-{story_id}-{current_status}",
+        }
 
     def _parse_story_details(self, payload: str, *, story_id: int) -> dict[str, Any]:
         header = f"=== KL-{story_id}: "

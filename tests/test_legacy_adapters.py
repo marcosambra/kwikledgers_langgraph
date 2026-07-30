@@ -85,6 +85,49 @@ class LegacyAdaptersTestCase(unittest.TestCase):
 
         self.assertFalse(preview["transition_allowed"])
         self.assertEqual(preview["current_status"], "Desenvolvimento")
+        self.assertEqual(preview["story_revision"], "story-status-120204-Desenvolvimento")
+
+    def test_story_status_preview_uses_native_story_revision_when_legacy_client_is_available(self) -> None:
+        adapter = LegacyStoryStatusTransitionAdapter()
+
+        class FakeWorkItemTrackingClient:
+            def get_work_item(self, *, id: int, fields: list[str]) -> object:
+                self.requested_id = id
+                self.requested_fields = list(fields)
+                return types.SimpleNamespace(
+                    fields={
+                        "System.Title": "Story",
+                        "System.State": "Desenvolvimento",
+                        "System.WorkItemType": "User Story",
+                    },
+                    rev=27,
+                    url="https://dev.azure.com/kwikledgers/story/120204",
+                )
+
+        fake_wit = FakeWorkItemTrackingClient()
+        fake_connection = types.SimpleNamespace(
+            clients=types.SimpleNamespace(get_work_item_tracking_client=lambda: fake_wit)
+        )
+
+        with patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
+            with patch.dict(os.environ, {}, clear=False):
+                fake_package = types.ModuleType("azure_devops")
+                fake_server = types.ModuleType("azure_devops.server")
+                fake_server.get_client = lambda: fake_connection
+                fake_server._get_story_details = lambda story_id: "fallback should not run"
+                fake_package.server = fake_server
+                with patch.dict(sys.modules, {"azure_devops": fake_package, "azure_devops.server": fake_server}):
+                    preview = adapter.preview_story_status_transition(
+                        {
+                            "story_id": 120204,
+                            "target_status": "Aguardando PR",
+                            "expected_current_status": "Desenvolvimento",
+                        }
+                    )
+
+        self.assertTrue(preview["transition_allowed"])
+        self.assertEqual(preview["story_revision"], "27")
+        self.assertEqual(preview["url"], "https://dev.azure.com/kwikledgers/story/120204")
 
     def test_story_status_update_rejects_revision_change_between_preview_and_execute(self) -> None:
         adapter = LegacyStoryStatusTransitionAdapter()
