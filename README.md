@@ -31,8 +31,8 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 - `KWIKLEDGERS_LEGACY_ROOT`: caminho absoluto para o root do workspace legado;
 	o adapter resolve `agent/mcp_servers` a partir dele.
 - `KWIKLEDGERS_LANGGRAPH_BACKEND`: backend de integracao selecionado para o runtime.
-	Hoje aceita `legacy` e `fastmcp`. O backend `legacy` segue como opcao completa;
-	`fastmcp` ja atende o provider Azure e o tracking local do fluxo `daily_summary`.
+	Hoje aceita `legacy` e `fastmcp`. O backend `legacy` segue como opcao ativa;
+	`fastmcp` fica apenas reservado para uma retomada futura e hoje falha de forma explicita por decisao arquitetural.
 - `KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY`: chave opcional para assinar com
 	HMAC os arquivos de estado salvos dos fluxos mutaveis. Quando definida, o
 	runtime tambem rejeita retomadas a partir de arquivos nao assinados.
@@ -90,9 +90,9 @@ poetry run kwikledgers-langgraph-story-status --help
 
 Todas as CLIs publicas tambem aceitam `--backend` para selecionar o backend de
 integracao em runtime. O valor padrao atual e `legacy`. O backend `fastmcp`
-permanece parcial: o fluxo `daily_summary` ja roda por bridges de
-compatibilidade no provider Azure, tracking local e notificacao, enquanto os
-fluxos mutaveis ainda falham de forma explicita por capability nao implementada.
+permanece pausado: a superficie continua reservada para eventual retomada da
+migracao, mas o caminho ativo volta a ser totalmente concentrado no LangGraph
+com backend `legacy`.
 
 ## Validacao rapida
 
@@ -189,7 +189,7 @@ Observabilidade externa minima:
 
 Backend selector atual:
 - `legacy`: backend operacional completo para todos os fluxos atuais
-- `fastmcp`: backend disponivel para provider Azure, tracking local e notificacao do fluxo `daily_summary`, ainda por bridges de compatibilidade onde o dominio novo nao tem implementacao nativa completa
+- `fastmcp`: backend pausado e bloqueado explicitamente no runtime atual
 
 Fluxo operacional da CLI de PR da story:
 

@@ -16,8 +16,8 @@ Backlog operacional do `kwikledgers_langgraph/`.
 
 - `daily_summary`, `story_pull_request`, `story_branch_association` e `story_status_transition` existem como fluxos compiláveis no runtime.
 - O runtime ja aceita selecao explicita de backend por CLI ou `KWIKLEDGERS_LANGGRAPH_BACKEND`, defaultando para `legacy`.
-- O backend `fastmcp` agora atende provider Azure, tracking local e notificacao de `daily_summary`; os fluxos mutaveis continuam no legado.
-- A suíte atual está verde com `95` testes unitários.
+- O backend `fastmcp` esta pausado por decisao atual; o caminho ativo segue integralmente no LangGraph com `legacy`.
+- A suíte atual está verde com `93` testes unitários.
 - Os fluxos mutáveis agora compartilham um seam interno preview-first com tratamento uniforme de preview, gate e execute.
 
 ## Concluído
@@ -69,8 +69,8 @@ Backlog operacional do `kwikledgers_langgraph/`.
 
 ## Lacunas concretas observadas hoje
 
-- O backend `fastmcp` ainda nao cobre os fluxos mutaveis; essas superfícies continuam no legado.
+- A evolucao do `fastmcp` esta pausada por decisao atual; os proximos comportamentos devem entrar direto no LangGraph ate nova decisao arquitetural.
 
 ## Ordem sugerida de execução
 
-1. Abrir a primeira capability mutavel ou preview deterministico do Azure no `fastmcp`, mantendo o contrato preview-first no LangGraph.
+1. Concentrar os proximos slices diretamente no LangGraph e reavaliar o papel do `fastmcp` apenas quando houver necessidade clara de separar transporte e orquestracao.
