@@ -67,6 +67,11 @@ def _build_fastmcp_tracking_sync_adapter() -> object:
     return module.build_tracking_sync_adapter()
 
 
+def _build_fastmcp_notification_adapter() -> object:
+    module = _load_fastmcp_server_module()
+    return module.build_notification_adapter()
+
+
 def _load_fastmcp_server_module() -> object:
     try:
         module = importlib.import_module("kwikledgers_fastmcp.server")
@@ -104,7 +109,7 @@ def build_daily_summary_ports(*, backend_name: str, notifications_enabled: bool)
         )
 
     if backend_name == FASTMCP_BACKEND:
-        notifications = LegacyNotificationAdapter() if notifications_enabled else NoOpNotificationAdapter()
+        notifications = _build_fastmcp_notification_adapter() if notifications_enabled else NoOpNotificationAdapter()
         return DailySummaryPorts(
             identity=EnvironmentIdentityResolverAdapter(),
             provider=_build_fastmcp_daily_summary_provider(),

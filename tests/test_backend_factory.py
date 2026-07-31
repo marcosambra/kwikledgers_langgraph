@@ -12,7 +12,7 @@ from kwikledgers_langgraph.backend_factory import (
     build_daily_summary_ports,
     resolve_backend_name,
 )
-from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter, LegacyTrackingSyncAdapter, NoOpNotificationAdapter
+from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter, NoOpNotificationAdapter
 
 
 class BackendFactoryTestCase(unittest.TestCase):
@@ -41,6 +41,27 @@ class BackendFactoryTestCase(unittest.TestCase):
     def test_build_daily_summary_ports_uses_fastmcp_provider_when_available(self) -> None:
         fastmcp_provider = object()
 
+        fastmcp_tracking = object()
+        fastmcp_notifications = object()
+
+        with patch(
+            "kwikledgers_langgraph.backend_factory._build_fastmcp_daily_summary_provider",
+            return_value=fastmcp_provider,
+        ), patch(
+            "kwikledgers_langgraph.backend_factory._build_fastmcp_tracking_sync_adapter",
+            return_value=fastmcp_tracking,
+        ), patch(
+            "kwikledgers_langgraph.backend_factory._build_fastmcp_notification_adapter",
+            return_value=fastmcp_notifications,
+        ):
+            ports = build_daily_summary_ports(backend_name=FASTMCP_BACKEND, notifications_enabled=True)
+
+        self.assertIs(ports.provider, fastmcp_provider)
+        self.assertIs(ports.tracking, fastmcp_tracking)
+        self.assertIs(ports.notifications, fastmcp_notifications)
+
+    def test_build_daily_summary_ports_uses_noop_notification_adapter_when_fastmcp_notifications_disabled(self) -> None:
+        fastmcp_provider = object()
         fastmcp_tracking = object()
 
         with patch(

@@ -188,7 +188,7 @@ Observabilidade externa minima:
 
 Backend selector atual:
 - `legacy`: backend operacional completo para todos os fluxos atuais
-- `fastmcp`: backend disponivel para o provider Azure e o tracking local do fluxo `daily_summary`; notificacoes continuam no legado neste slice
+- `fastmcp`: backend disponivel para provider Azure, tracking local e notificacao do fluxo `daily_summary`, ainda por bridges de compatibilidade onde o dominio novo nao tem implementacao nativa completa
 
 Fluxo operacional da CLI de PR da story:
 
