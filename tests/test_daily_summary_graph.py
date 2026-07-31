@@ -46,6 +46,15 @@ class FakeNotificationAdapter:
         return {"status": "sent"}
 
 
+class FailingNotificationAdapter:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def send_daily_summary_notification(self, summary: dict[str, Any]) -> str:
+        self.calls.append(summary)
+        return "Erro ao enviar notificacao: powershell indisponivel"
+
+
 def _base_state() -> dict[str, Any]:
     return {
         "source": "test-daily-summary",
@@ -132,6 +141,23 @@ class DailySummaryGraphTestCase(unittest.TestCase):
         self.assertEqual(identity.calls, 1)
         self.assertNotIn("user_identity", result)
         self.assertEqual(result["summary"]["counts"]["assigned_items"], 3)
+        self.assertEqual(result["observability"]["timeline"][-1]["node"], "notify_user")
+
+    def test_notification_failure_is_recorded_as_failed_runtime_event(self) -> None:
+        runtime = build_daily_summary_graph(
+            DailySummaryPorts(
+                identity=FakeIdentityResolver({}),
+                provider=FakeDailySummaryProvider(),
+                tracking=FakeTrackingAdapter(),
+                notifications=FailingNotificationAdapter(),
+            )
+        )
+
+        result = runtime.invoke(_base_state())
+
+        self.assertIn("errors", result)
+        self.assertIn("Erro ao enviar notificacao", result["errors"][0])
+        self.assertEqual(result["observability"]["timeline"][-1]["status"], "failed")
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "notify_user")
 
 

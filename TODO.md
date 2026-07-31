@@ -17,7 +17,7 @@ Backlog operacional do `kwikledgers_langgraph/`.
 - `daily_summary`, `story_pull_request`, `story_branch_association` e `story_status_transition` existem como fluxos compiláveis no runtime.
 - O runtime ja aceita selecao explicita de backend por CLI ou `KWIKLEDGERS_LANGGRAPH_BACKEND`, defaultando para `legacy`.
 - O backend `fastmcp` agora atende provider Azure, tracking local e notificacao de `daily_summary`; os fluxos mutaveis continuam no legado.
-- A suíte atual está verde com `94` testes unitários.
+- A suíte atual está verde com `95` testes unitários.
 - Os fluxos mutáveis agora compartilham um seam interno preview-first com tratamento uniforme de preview, gate e execute.
 
 ## Concluído

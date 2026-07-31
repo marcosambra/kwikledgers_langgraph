@@ -7,11 +7,20 @@ from langgraph.graph import END, START, StateGraph
 from kwikledgers_langgraph.adapters import DailySummaryPorts
 from kwikledgers_langgraph.guardrails import OperationKind, allow_without_approval
 from kwikledgers_langgraph.observability import record_runtime_event
-from kwikledgers_langgraph.state import AgentState, append_tracking_event
+from kwikledgers_langgraph.state import AgentState, append_error, append_tracking_event
 
 
 def build_daily_summary_graph(ports: DailySummaryPorts) -> Any:
     graph = StateGraph(AgentState)
+
+    def _notification_failed(result: Any) -> bool:
+        if isinstance(result, dict):
+            status = str(result.get("status") or "").strip().lower()
+            return status in {"error", "failed", "send_failed"}
+        if isinstance(result, str):
+            normalized = result.strip().lower()
+            return normalized.startswith("erro ao ") or normalized.startswith("error ")
+        return False
 
     def load_identity_context(state: AgentState) -> dict[str, Any]:
         updates = record_runtime_event(
@@ -154,6 +163,18 @@ def build_daily_summary_graph(ports: DailySummaryPorts) -> Any:
             message="Notificacao do resumo diario emitida pelo runtime LangGraph.",
             payload={"result": result if isinstance(result, dict) else {"value": str(result)}},
         )
+
+        if _notification_failed(result):
+            error_message = str(result if isinstance(result, str) else result.get("message") or result)
+            error = append_error(state, error_message)
+            failed = record_runtime_event(
+                state,
+                node="notify_user",
+                status="failed",
+                message="Falha ao enviar notificacao do resumo diario.",
+            )
+            return {**guardrail, **started, **event, **error, **failed}
+
         completed = record_runtime_event(
             state,
             node="notify_user",

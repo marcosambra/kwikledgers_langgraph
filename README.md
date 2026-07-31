@@ -90,8 +90,9 @@ poetry run kwikledgers-langgraph-story-status --help
 
 Todas as CLIs publicas tambem aceitam `--backend` para selecionar o backend de
 integracao em runtime. O valor padrao atual e `legacy`. O backend `fastmcp`
-permanece reservado para a migracao futura e hoje falha de forma explicita por
-capability ainda nao implementada.
+permanece parcial: o fluxo `daily_summary` ja roda por bridges de
+compatibilidade no provider Azure, tracking local e notificacao, enquanto os
+fluxos mutaveis ainda falham de forma explicita por capability nao implementada.
 
 ## Validacao rapida
 
