@@ -23,6 +23,10 @@ O projeto foi estruturado para viver como um repositório próprio no GitHub.
 	compatibilidade.
 - Os adapters legados nao dependem mais de um caminho fixo do monorepo; eles
 	aceitam configuracao explicita por variaveis de ambiente.
+- Para execucao real (nao mockada) com o backend `legacy`, este pacote agora
+	declara `mcp`, `azure-devops`, `msrest` e `python-dotenv` como dependencias
+	diretas, porque `legacy_adapters.py` importa os modulos do agente legado em
+	processo, sem passar pelo transporte MCP.
 
 Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 
