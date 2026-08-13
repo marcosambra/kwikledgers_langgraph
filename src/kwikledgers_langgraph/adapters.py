@@ -56,6 +56,11 @@ class TaskClosurePort(Protocol):
         """Execute the task closure (effort update plus Closed status)."""
 
 
+class SprintStoriesPort(Protocol):
+    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return the detailed current-sprint stories payload (description, acceptance criteria, children)."""
+
+
 @dataclass(frozen=True)
 class DailySummaryPorts:
     provider: DailySummaryProvider
@@ -82,3 +87,8 @@ class StoryStatusTransitionPorts:
 @dataclass(frozen=True)
 class TaskClosurePorts:
     closures: TaskClosurePort
+
+
+@dataclass(frozen=True)
+class SprintStoriesPorts:
+    stories: SprintStoriesPort

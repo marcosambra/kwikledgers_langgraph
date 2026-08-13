@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from kwikledgers_langgraph.legacy_adapters import (
     EnvironmentIdentityResolverAdapter,
+    LegacySprintStoriesProvider,
     LegacyStoryBranchAssociationAdapter,
     LegacyStoryPullRequestAdapter,
     LegacyStoryStatusTransitionAdapter,
@@ -266,6 +267,35 @@ class LegacyAdaptersTestCase(unittest.TestCase):
         self.assertEqual(effort_calls[0]["completed_work_hours"], 2.0)
         self.assertIsNone(effort_calls[0]["remaining_work_hours"])
         self.assertEqual(status_calls, [{"story_id": 120310, "status": "Closed"}])
+
+    def test_sprint_stories_provider_parses_legacy_detailed_payload(self) -> None:
+        provider = LegacySprintStoriesProvider()
+
+        with patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
+            fake_package = types.ModuleType("azure_devops")
+            fake_server = types.ModuleType("azure_devops.server")
+            fake_server._get_sprint_stories_detailed = lambda: (
+                '{"counts": {"total_stories": 2}, '
+                '"stories": [{"id": 1, "description": "desc"}]}'
+            )
+            fake_package.server = fake_server
+            with patch.dict(sys.modules, {"azure_devops": fake_package, "azure_devops.server": fake_server}):
+                result = provider.fetch_sprint_stories_detailed({})
+
+        self.assertEqual(result["counts"]["total_stories"], 2)
+        self.assertEqual(result["stories"][0]["id"], 1)
+
+    def test_sprint_stories_provider_rejects_invalid_json(self) -> None:
+        provider = LegacySprintStoriesProvider()
+
+        with patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
+            fake_package = types.ModuleType("azure_devops")
+            fake_server = types.ModuleType("azure_devops.server")
+            fake_server._get_sprint_stories_detailed = lambda: "{"
+            fake_package.server = fake_server
+            with patch.dict(sys.modules, {"azure_devops": fake_package, "azure_devops.server": fake_server}):
+                with self.assertRaises(RuntimeError):
+                    provider.fetch_sprint_stories_detailed({})
 
     def test_story_branch_preview_rejects_invalid_json(self) -> None:
         adapter = LegacyStoryBranchAssociationAdapter()

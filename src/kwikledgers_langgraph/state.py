@@ -117,6 +117,8 @@ class AgentState(TypedDict, total=False):
     task_closure_request: TaskClosureRequest
     task_closure_preview: dict[str, Any]
     task_closure_result: dict[str, Any]
+    sprint_stories_request: dict[str, Any]
+    sprint_stories_result: dict[str, Any]
     pending_approval: ApprovalRequest
     approval_confirmation: ApprovalConfirmation
     approval_resume_ready: bool

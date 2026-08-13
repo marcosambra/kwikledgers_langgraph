@@ -4,6 +4,7 @@ import os
 
 from kwikledgers_langgraph.adapters import (
     DailySummaryPorts,
+    SprintStoriesPorts,
     StoryBranchAssociationPorts,
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
@@ -13,6 +14,7 @@ from kwikledgers_langgraph.legacy_adapters import (
     EnvironmentIdentityResolverAdapter,
     LegacyDailySummaryProvider,
     LegacyNotificationAdapter,
+    LegacySprintStoriesProvider,
     LegacyStoryBranchAssociationAdapter,
     LegacyStoryPullRequestAdapter,
     LegacyStoryStatusTransitionAdapter,
@@ -95,4 +97,13 @@ def build_task_closure_ports(*, backend_name: str) -> TaskClosurePorts:
 
     raise BackendSelectionError(
         "O backend 'fastmcp' ainda nao esta disponivel para a capability 'task_closure'."
+    )
+
+
+def build_sprint_stories_ports(*, backend_name: str) -> SprintStoriesPorts:
+    if backend_name == LEGACY_BACKEND:
+        return SprintStoriesPorts(stories=LegacySprintStoriesProvider())
+
+    raise BackendSelectionError(
+        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'sprint_stories'."
     )

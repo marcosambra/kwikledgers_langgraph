@@ -11,6 +11,7 @@ from typing import Any
 from kwikledgers_langgraph.adapters import (
     IdentityResolverPort,
     NotificationPort,
+    SprintStoriesPort,
     StoryBranchAssociationPort,
     StoryPullRequestPort,
     StoryStatusTransitionPort,
@@ -135,6 +136,19 @@ class LegacyDailySummaryProvider:
             payload,
             invalid_message="O provider legado retornou um resumo diario em JSON invalido.",
             root_message="O provider legado retornou um resumo diario invalido.",
+        )
+
+
+class LegacySprintStoriesProvider(SprintStoriesPort):
+    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+
+        payload = azure_server._get_sprint_stories_detailed()
+        return _parse_legacy_json_dict(
+            payload,
+            invalid_message="O provider legado retornou as historias detalhadas do sprint em JSON invalido.",
+            root_message="O provider legado retornou um payload invalido para as historias detalhadas do sprint.",
         )
 
 

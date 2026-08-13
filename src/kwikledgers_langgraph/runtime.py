@@ -4,6 +4,7 @@ from typing import Any
 
 from kwikledgers_langgraph.adapters import (
     DailySummaryPorts,
+    SprintStoriesPorts,
     StoryBranchAssociationPorts,
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
@@ -87,6 +88,20 @@ def build_task_closure_runtime(ports: TaskClosurePorts) -> Any:
         raise
 
     return build_task_closure_graph(ports)
+
+
+def build_sprint_stories_runtime(ports: SprintStoriesPorts) -> Any:
+    try:
+        from kwikledgers_langgraph.graphs.sprint_stories import build_sprint_stories_graph
+    except ModuleNotFoundError as error:
+        if error.name == "langgraph":
+            raise RuntimeError(
+                "A dependencia 'langgraph' ainda nao esta instalada neste ambiente. "
+                "Instale as dependencias do projeto 'kwikledgers_langgraph' para compilar o runtime."
+            ) from error
+        raise
+
+    return build_sprint_stories_graph(ports)
 
 
 def list_mutable_runtime_builders() -> dict[str, str]:
