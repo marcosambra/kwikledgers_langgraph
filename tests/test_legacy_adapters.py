@@ -13,6 +13,7 @@ from kwikledgers_langgraph.legacy_adapters import (
     LegacyStoryBranchAssociationAdapter,
     LegacyStoryPullRequestAdapter,
     LegacyStoryStatusTransitionAdapter,
+    LegacyTaskClosureAdapter,
     NoOpNotificationAdapter,
     _resolve_mcp_path,
 )
@@ -161,6 +162,110 @@ class LegacyAdaptersTestCase(unittest.TestCase):
                         },
                     }
                 )
+
+    def test_task_closure_preview_computes_hours_with_ceil(self) -> None:
+        adapter = LegacyTaskClosureAdapter()
+
+        preview = adapter.preview_task_closure(
+            {
+                "task_id": 120310,
+                "start_time": "2026-07-10T11:00:00+00:00",
+                "close_time": "2026-07-10T11:00:01+00:00",
+            }
+        )
+
+        self.assertEqual(preview["computed_hours"], 1)
+        self.assertEqual(preview["completed_work_hours"], 1.0)
+        self.assertIsNone(preview["remaining_work_hours"])
+        self.assertTrue(preview["closure_allowed"])
+        self.assertEqual(preview["validation_messages"], [])
+
+    def test_task_closure_preview_respects_explicit_hours_override(self) -> None:
+        adapter = LegacyTaskClosureAdapter()
+
+        preview = adapter.preview_task_closure(
+            {
+                "task_id": 120310,
+                "start_time": "2026-07-10T11:00:00+00:00",
+                "close_time": "2026-07-10T13:00:00+00:00",
+                "completed_work_hours": 5.5,
+                "remaining_work_hours": 2.0,
+            }
+        )
+
+        self.assertEqual(preview["computed_hours"], 2)
+        self.assertEqual(preview["completed_work_hours"], 5.5)
+        self.assertEqual(preview["remaining_work_hours"], 2.0)
+
+    def test_task_closure_preview_blocks_close_time_before_start_time(self) -> None:
+        adapter = LegacyTaskClosureAdapter()
+
+        preview = adapter.preview_task_closure(
+            {
+                "task_id": 120310,
+                "start_time": "2026-07-10T11:00:00+00:00",
+                "close_time": "2026-07-10T09:00:00+00:00",
+            }
+        )
+
+        self.assertFalse(preview["closure_allowed"])
+        self.assertIn(
+            "O horario de fechamento nao pode ser anterior ao horario de inicio.",
+            preview["validation_messages"],
+        )
+
+    def test_task_closure_close_task_rejects_when_preview_not_allowed(self) -> None:
+        adapter = LegacyTaskClosureAdapter()
+
+        with self.assertRaises(RuntimeError):
+            adapter.close_task(
+                {
+                    "task_id": 120310,
+                    "preview": {"closure_allowed": False, "validation_messages": ["boom"]},
+                }
+            )
+
+    def test_task_closure_close_task_updates_effort_and_status(self) -> None:
+        adapter = LegacyTaskClosureAdapter()
+        effort_calls: list[dict[str, object]] = []
+        status_calls: list[dict[str, object]] = []
+
+        with patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
+            fake_package = types.ModuleType("azure_devops")
+            fake_server = types.ModuleType("azure_devops.server")
+
+            def fake_update_effort(**kwargs: object) -> str:
+                effort_calls.append(kwargs)
+                return "effort updated"
+
+            def fake_update_status(*, story_id: int, status: str) -> str:
+                status_calls.append({"story_id": story_id, "status": status})
+                return f"Historia KL-{story_id} atualizada para: {status}"
+
+            fake_server._update_work_item_effort = fake_update_effort
+            fake_server._update_story_status = fake_update_status
+            fake_package.server = fake_server
+            with patch.dict(sys.modules, {"azure_devops": fake_package, "azure_devops.server": fake_server}):
+                result = adapter.close_task(
+                    {
+                        "task_id": 120310,
+                        "preview": {
+                            "closure_allowed": True,
+                            "completed_work_hours": 2.0,
+                            "remaining_work_hours": None,
+                            "comment": "fechamento automatico",
+                        },
+                    }
+                )
+
+        self.assertEqual(result["status"], "closed")
+        self.assertEqual(result["task_id"], 120310)
+        self.assertEqual(result["completed_work_hours"], 2.0)
+        self.assertEqual(len(effort_calls), 1)
+        self.assertEqual(effort_calls[0]["work_item_id"], 120310)
+        self.assertEqual(effort_calls[0]["completed_work_hours"], 2.0)
+        self.assertIsNone(effort_calls[0]["remaining_work_hours"])
+        self.assertEqual(status_calls, [{"story_id": 120310, "status": "Closed"}])
 
     def test_story_branch_preview_rejects_invalid_json(self) -> None:
         adapter = LegacyStoryBranchAssociationAdapter()

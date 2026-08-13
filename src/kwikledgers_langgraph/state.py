@@ -56,6 +56,15 @@ class StoryStatusTransitionRequest(TypedDict, total=False):
     expected_current_status: str
 
 
+class TaskClosureRequest(TypedDict, total=False):
+    task_id: int
+    start_time: str
+    close_time: str
+    completed_work_hours: float
+    remaining_work_hours: float
+    comment: str
+
+
 class ApprovalRequest(TypedDict, total=False):
     action: str
     preview: dict[str, Any]
@@ -105,6 +114,9 @@ class AgentState(TypedDict, total=False):
     story_status_request: StoryStatusTransitionRequest
     story_status_preview: dict[str, Any]
     story_status_result: dict[str, Any]
+    task_closure_request: TaskClosureRequest
+    task_closure_preview: dict[str, Any]
+    task_closure_result: dict[str, Any]
     pending_approval: ApprovalRequest
     approval_confirmation: ApprovalConfirmation
     approval_resume_ready: bool

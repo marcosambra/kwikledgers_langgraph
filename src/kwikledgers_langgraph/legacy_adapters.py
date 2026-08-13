@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,7 @@ from kwikledgers_langgraph.adapters import (
     StoryBranchAssociationPort,
     StoryPullRequestPort,
     StoryStatusTransitionPort,
+    TaskClosurePort,
 )
 
 
@@ -411,4 +414,79 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
             "work_item_type": work_item_type,
             "url": url,
             "story_revision": story_revision or f"story-status-{story_id}-{current_status}",
+        }
+
+
+def _parse_iso_datetime(value: str, *, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).strip())
+    except ValueError as error:
+        raise RuntimeError(f"O campo '{field_name}' nao esta em um formato ISO 8601 valido: {value}") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+class LegacyTaskClosureAdapter(TaskClosurePort):
+    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        task_id = int(request["task_id"])
+        start_time = _parse_iso_datetime(request["start_time"], field_name="start_time")
+        close_time_raw = str(request.get("close_time") or "").strip()
+        close_time = _parse_iso_datetime(close_time_raw, field_name="close_time") if close_time_raw else datetime.now(timezone.utc)
+
+        validation_messages: list[str] = []
+        if close_time < start_time:
+            validation_messages.append("O horario de fechamento nao pode ser anterior ao horario de inicio.")
+
+        elapsed_seconds = max((close_time - start_time).total_seconds(), 0.0)
+        computed_hours = math.ceil(elapsed_seconds / 3600) if elapsed_seconds > 0 else 0
+
+        explicit_hours = request.get("completed_work_hours")
+        completed_work_hours = float(explicit_hours) if explicit_hours is not None else float(computed_hours)
+        remaining_work_hours = request.get("remaining_work_hours")
+
+        return {
+            "task_id": task_id,
+            "start_time": start_time.isoformat(),
+            "close_time": close_time.isoformat(),
+            "elapsed_seconds": elapsed_seconds,
+            "computed_hours": computed_hours,
+            "completed_work_hours": completed_work_hours,
+            "remaining_work_hours": remaining_work_hours,
+            "target_status": "Closed",
+            "comment": request.get("comment"),
+            "closure_allowed": not validation_messages,
+            "validation_messages": validation_messages,
+        }
+
+    def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
+        preview = dict(request.get("preview", {}))
+        task_id = int(request["task_id"])
+        if not preview.get("closure_allowed"):
+            raise RuntimeError("O fechamento da task nao e permitido pelo preview atual; gere uma nova pre-visualizacao.")
+
+        completed_work_hours = preview.get("completed_work_hours")
+        remaining_work_hours = preview.get("remaining_work_hours")
+        comment = preview.get("comment")
+
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+
+        effort_payload = azure_server._update_work_item_effort(
+            work_item_id=task_id,
+            completed_work_hours=completed_work_hours,
+            remaining_work_hours=remaining_work_hours,
+            comment=comment,
+        )
+        status_payload = azure_server._update_story_status(story_id=task_id, status="Closed")
+
+        return {
+            "status": "closed",
+            "task_id": task_id,
+            "completed_work_hours": completed_work_hours,
+            "remaining_work_hours": remaining_work_hours,
+            "target_status": "Closed",
+            "changed": True,
+            "effort_update": effort_payload,
+            "status_update": status_payload,
         }

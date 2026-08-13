@@ -7,6 +7,7 @@ from kwikledgers_langgraph.adapters import (
     StoryBranchAssociationPorts,
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
+    TaskClosurePorts,
 )
 from kwikledgers_langgraph.legacy_adapters import (
     EnvironmentIdentityResolverAdapter,
@@ -15,6 +16,7 @@ from kwikledgers_langgraph.legacy_adapters import (
     LegacyStoryBranchAssociationAdapter,
     LegacyStoryPullRequestAdapter,
     LegacyStoryStatusTransitionAdapter,
+    LegacyTaskClosureAdapter,
     LegacyTrackingSyncAdapter,
     NoOpNotificationAdapter,
 )
@@ -84,4 +86,13 @@ def build_story_status_transition_ports(*, backend_name: str) -> StoryStatusTran
 
     raise BackendSelectionError(
         "O backend 'fastmcp' ainda nao esta disponivel para a capability 'story_status_transition'."
+    )
+
+
+def build_task_closure_ports(*, backend_name: str) -> TaskClosurePorts:
+    if backend_name == LEGACY_BACKEND:
+        return TaskClosurePorts(closures=LegacyTaskClosureAdapter())
+
+    raise BackendSelectionError(
+        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'task_closure'."
     )
