@@ -15,10 +15,9 @@ Backlog operacional do `kwikledgers_langgraph/`.
 ## Estado atual verificado
 
 - `daily_summary`, `story_pull_request`, `story_branch_association` e `story_status_transition` existem como fluxos compiláveis no runtime.
-- O runtime ja aceita selecao explicita de backend por CLI ou `KWIKLEDGERS_LANGGRAPH_BACKEND`, defaultando para `legacy`.
-- O backend `fastmcp` esta pausado por decisao atual; o caminho ativo segue integralmente no LangGraph com `legacy`.
-- A suíte atual está verde com `93` testes unitários.
+- A suíte atual está verde com `57` testes unitários.
 - Os fluxos mutáveis agora compartilham um seam interno preview-first com tratamento uniforme de preview, gate e execute.
+- Já existe um caminho de depuração visual local via LangGraph Studio (`langgraph dev`), configurado em `langgraph.json` com ports mockados em `dev_studio.py`, documentado no `README.md`.
 
 ## Concluído
 
@@ -27,11 +26,6 @@ Backlog operacional do `kwikledgers_langgraph/`.
 - [x] Endurecer o contrato de aprovação para mutações reais, separando o pedido emitido pelo runtime da confirmação humana e reduzindo a dependência em `pending_approval` vindo pronto no estado inicial.
 - [x] Cobrir a superfície CLI do fluxo mutável de PR da story com testes focados.
 - [x] Cobrir o grafo `story_pull_request` com testes comportamentais: payload inválido, preview sem aprovação, parada limpa e caminho com aprovação.
-- [x] Adicionar um seam de backend selector no runtime, preservando `legacy` como default e impedindo retomadas de preview entre backends diferentes.
-- [x] Emitir um stream estruturado externo de observabilidade do runtime, sem perder o resumo enxuto em `AI_Tracking/Metrics/ai-usage-log.md`.
-- [x] Usar revisao nativa da story no preview de status quando o adapter legado consegue acessar o cliente Azure, preservando fallback compativel.
-- [x] Sanitizar a observabilidade externa para reduzir payloads e redigir campos sensiveis antes de persistir artefatos em `AI_Tracking`.
-- [x] Oferecer assinatura HMAC opcional para os arquivos de estado salvos dos fluxos mutaveis e rejeitar retomadas nao assinadas quando essa protecao estiver configurada.
 
 ## Próximos slices prioritários
 
@@ -69,8 +63,10 @@ Backlog operacional do `kwikledgers_langgraph/`.
 
 ## Lacunas concretas observadas hoje
 
-- A evolucao do `fastmcp` esta pausada por decisao atual; os proximos comportamentos devem entrar direto no LangGraph ate nova decisao arquitetural.
+- Ainda não existe emissao estruturada de spans/eventos fora do resumo minimo enviado para `AI_Tracking/Metrics/ai-usage-log.md`.
+- O preview de status ainda sintetiza a revisao da story a partir do detalhe legado disponivel, sem um campo de revisao nativo vindo do MCP legado.
 
 ## Ordem sugerida de execução
 
-1. Concentrar os proximos slices diretamente no LangGraph e reavaliar o papel do `fastmcp` apenas quando houver necessidade clara de separar transporte e orquestracao.
+1. Evoluir o destino externo de observabilidade alem do resumo minimo em `AI_Tracking`.
+2. Endurecer o preview de status quando o MCP legado expuser revisao nativa da story.

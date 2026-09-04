@@ -6,6 +6,8 @@ __pycache__/
 coverage.xml
 .venv/
 venv/
+.venv-studio/
+.langgraph_api/
 build/
 dist/
 *.egg-info/

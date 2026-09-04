@@ -17,16 +17,12 @@ e notificacoes sejam plugados sem editar o runtime legado nesta fase.
 
 O projeto foi estruturado para viver como um repositório próprio no GitHub.
 
-- O codigo-fonte vive sob `src/kwikledgers_langgraph/`.
+- O codigo-fonte vive sob `kwikledgers_langgraph/`.
 - A validacao basica vive sob `tests/`.
 - O runtime legado da KwikLedgers e opcional e entra apenas por adapters de
 	compatibilidade.
 - Os adapters legados nao dependem mais de um caminho fixo do monorepo; eles
 	aceitam configuracao explicita por variaveis de ambiente.
-- Para execucao real (nao mockada) com o backend `legacy`, este pacote agora
-	declara `mcp`, `azure-devops`, `msrest` e `python-dotenv` como dependencias
-	diretas, porque `legacy_adapters.py` importa os modulos do agente legado em
-	processo, sem passar pelo transporte MCP.
 
 Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 
@@ -34,32 +30,26 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 	`agent/mcp_servers` do workspace legado.
 - `KWIKLEDGERS_LEGACY_ROOT`: caminho absoluto para o root do workspace legado;
 	o adapter resolve `agent/mcp_servers` a partir dele.
-- `KWIKLEDGERS_LANGGRAPH_BACKEND`: backend de integracao selecionado para o runtime.
-	Hoje aceita `legacy` e `fastmcp`. O backend `legacy` segue como opcao ativa;
-	`fastmcp` fica apenas reservado para uma retomada futura e hoje falha de forma explicita por decisao arquitetural.
-- `KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY`: chave opcional para assinar com
-	HMAC os arquivos de estado salvos dos fluxos mutaveis. Quando definida, o
-	runtime tambem rejeita retomadas a partir de arquivos nao assinados.
 - `KWIKLEDGERS_USER_EMAIL`: email explicito do usuario atual para o seam de identidade do runtime novo.
 - `KWIKLEDGERS_USER_DISPLAY_NAME`: nome exibido do usuario atual quando a identidade for resolvida por ambiente.
 
 ## Estrutura inicial
 
-- `src/kwikledgers_langgraph/state.py`: contrato tipado do estado compartilhado
-- `src/kwikledgers_langgraph/adapters.py`: portas/protocolos para integracoes
-- `src/kwikledgers_langgraph/legacy_adapters.py`: adapters de compatibilidade com o runtime atual
-- `src/kwikledgers_langgraph/guardrails.py`: gates explicitos de aprovacao e classificacao de operacoes
-- `src/kwikledgers_langgraph/observability.py`: correlation ID, run ID e timeline da execucao
-- `src/kwikledgers_langgraph/graphs/mutable_flow.py`: seam compartilhado para fluxos mutaveis preview-first
-- `src/kwikledgers_langgraph/graphs/daily_summary.py`: primeiro subgrafo
-- `src/kwikledgers_langgraph/graphs/story_pull_request.py`: fluxo de preview/aprovacao/criacao de PR da story
-- `src/kwikledgers_langgraph/graphs/story_branch_association.py`: fluxo de preview/aprovacao/associacao de branch da story
-- `src/kwikledgers_langgraph/graphs/story_status_transition.py`: fluxo de preview/aprovacao/transicao de status da story
-- `src/kwikledgers_langgraph/runtime.py`: fabrica de compilacao do runtime
-- `src/kwikledgers_langgraph/cli.py`: entrypoint manual do novo runtime
-- `src/kwikledgers_langgraph/story_pr_cli.py`: entrypoint dedicado ao fluxo de PR da story
-- `src/kwikledgers_langgraph/story_branch_cli.py`: entrypoint dedicado ao fluxo de associacao de branch da story
-- `src/kwikledgers_langgraph/story_status_cli.py`: entrypoint dedicado ao fluxo de transicao de status da story
+- `kwikledgers_langgraph/state.py`: contrato tipado do estado compartilhado
+- `kwikledgers_langgraph/adapters.py`: portas/protocolos para integracoes
+- `kwikledgers_langgraph/legacy_adapters.py`: adapters de compatibilidade com o runtime atual
+- `kwikledgers_langgraph/guardrails.py`: gates explicitos de aprovacao e classificacao de operacoes
+- `kwikledgers_langgraph/observability.py`: correlation ID, run ID e timeline da execucao
+- `kwikledgers_langgraph/graphs/mutable_flow.py`: seam compartilhado para fluxos mutaveis preview-first
+- `kwikledgers_langgraph/graphs/daily_summary.py`: primeiro subgrafo
+- `kwikledgers_langgraph/graphs/story_pull_request.py`: fluxo de preview/aprovacao/criacao de PR da story
+- `kwikledgers_langgraph/graphs/story_branch_association.py`: fluxo de preview/aprovacao/associacao de branch da story
+- `kwikledgers_langgraph/graphs/story_status_transition.py`: fluxo de preview/aprovacao/transicao de status da story
+- `kwikledgers_langgraph/runtime.py`: fabrica de compilacao do runtime
+- `kwikledgers_langgraph/cli.py`: entrypoint manual do novo runtime
+- `kwikledgers_langgraph/story_pr_cli.py`: entrypoint dedicado ao fluxo de PR da story
+- `kwikledgers_langgraph/story_branch_cli.py`: entrypoint dedicado ao fluxo de associacao de branch da story
+- `kwikledgers_langgraph/story_status_cli.py`: entrypoint dedicado ao fluxo de transicao de status da story
 
 ## Execucao manual
 
@@ -92,17 +82,33 @@ poetry run kwikledgers-langgraph-story-branch --help
 poetry run kwikledgers-langgraph-story-status --help
 ```
 
-Todas as CLIs publicas tambem aceitam `--backend` para selecionar o backend de
-integracao em runtime. O valor padrao atual e `legacy`. O backend `fastmcp`
-permanece pausado: a superficie continua reservada para eventual retomada da
-migracao, mas o caminho ativo volta a ser totalmente concentrado no LangGraph
-com backend `legacy`.
-
 ## Validacao rapida
 
 ```bash
 poetry run python -m unittest discover -s tests
 ```
+
+## Interface visual (LangGraph Studio local)
+
+O projeto usa um único ambiente Poetry (Python 3.11+) que já inclui
+`langgraph-cli[inmem]` como dependência declarada em `pyproject.toml`. O
+Studio local sobe direto pelo mesmo `.venv` do projeto, sem venv separado,
+e usa apenas ports mockados (nunca os adapters legados reais) definidos em
+`kwikledgers_langgraph/dev_studio.py`.
+
+Passos:
+
+```bash
+poetry install
+poetry run langgraph dev
+```
+
+Isso sobe um servidor local com os grafos declarados em `langgraph.json`
+(`daily_summary`, `story_pull_request`, `story_branch_association`,
+`story_status_transition`), usando ports mockados definidos em
+`kwikledgers_langgraph/dev_studio.py` (nunca os adapters legados reais).
+O terminal mostra a URL do Studio (`https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8123`)
+para abrir a UI interativa no navegador.
 
 ## Roadmap Visual
 
@@ -121,7 +127,8 @@ flowchart TD
 	classDef done fill:#1f7a1f,stroke:#9be29b,color:#f4fff4,stroke-width:2px;
 	classDef pending fill:#7a1f1f,stroke:#ff9b9b,color:#fff4f4,stroke-width:2px;
 
-	class A,B,C,D,E,F,G,H,I,J done;
+	class A,B,C,D,E,F,G,H done;
+	class I,J pending;
 ```
 
 - Verde: slices implementados e validados.
@@ -143,7 +150,6 @@ O runtime novo agora registra em codigo:
 - classificacao explicita das operacoes por tipo
 - decisao de guardrail para cada etapa do fluxo
 - `correlation_id` e `active_run_id` por execucao
-- `backend_name` persistido no contexto de observabilidade
 - timeline de eventos por node no estado compartilhado
 - emissao opcional de um resumo operacional em `AI_Tracking/Metrics/ai-usage-log.md`, consumivel pelo `kl_observatory`
 
@@ -172,28 +178,19 @@ O fluxo de associacao de branch da story segue o mesmo contrato preview-first:
 O fluxo de transicao de status da story segue o mesmo contrato preview-first:
 - o preview da transicao sempre roda como leitura e valida a proxima etapa do fluxo canonico
 - o runtime persiste `story_status_preview`, `pending_approval.request_id` e `observability.active_run_id`
-- a execucao real revalida status atual e revisao nativa da story quando o adapter legado consegue acessar o cliente Azure, mantendo fallback compatível para parse sintetico apenas quando necessario
+- a execucao real revalida status atual e revisao sintetizada antes de aplicar a mudanca
 - o CLI dedicado aceita `--approve-transition` apenas como simulacao local para teste
 
 Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
 - validacao minima de request obrigatorio
 - preview read-only com tratamento uniforme de falha de adapter
 - approval gate padronizado com `request_id`, `preview` e `active_run_id`
-- retomada que recusa trocar o backend entre preview salvo e execute retomado
-- suporte opcional a assinatura HMAC do arquivo de estado salvo para endurecer a integridade da retomada
 - execute com tratamento uniforme de falha e resultado operacional minimo
 
 Observabilidade externa minima:
 - por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`
-- no mesmo sync, o runtime tambem emite eventos estruturados em `AI_Tracking/Metrics/langgraph-runtime-events.jsonl`
-- o stream JSONL inclui `run_summary`, `timeline_event`, `decision`, `tracking_event` e `error`, sempre vinculados por `backend_name`, `correlation_id` e `active_run_id`
-- antes de persistir esses artefatos externos, o runtime reduz payloads e reda campos sensiveis como URLs, tokens, markdowns longos e mensagens brutas de erro
 - esse resumo reaproveita o formato que o `kl_observatory` ja parseia, sem acoplar o runtime ao banco/API do observatory
-- use `--disable-observability-sync` quando quiser rodar a CLI sem emitir nenhum desses artefatos externos
-
-Backend selector atual:
-- `legacy`: backend operacional completo para todos os fluxos atuais
-- `fastmcp`: backend pausado e bloqueado explicitamente no runtime atual
+- use `--disable-observability-sync` quando quiser rodar a CLI sem emitir esse evento externo
 
 Fluxo operacional da CLI de PR da story:
 
@@ -273,5 +270,5 @@ poetry run kwikledgers-langgraph-story-status \
 
 ## Proximo passo natural
 
-Usar o backend selector ja entregue para conectar as primeiras capabilities
-reais do FastMCP sem mexer no contrato preview-first dos grafos atuais.
+Evoluir a emissao de observabilidade minima para sinais mais ricos no stack,
+sem perder o contrato enxuto de preview, tracking e timeline.

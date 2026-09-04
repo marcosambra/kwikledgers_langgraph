@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from kwikledgers_langgraph.adapters import (
     IdentityResolverPort,
     NotificationPort,
-    SprintStoriesPort,
     StoryBranchAssociationPort,
     StoryPullRequestPort,
     StoryStatusTransitionPort,
-    TaskClosurePort,
 )
 
 
@@ -136,19 +132,6 @@ class LegacyDailySummaryProvider:
             payload,
             invalid_message="O provider legado retornou um resumo diario em JSON invalido.",
             root_message="O provider legado retornou um resumo diario invalido.",
-        )
-
-
-class LegacySprintStoriesProvider(SprintStoriesPort):
-    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
-        _ensure_legacy_import_path()
-        from azure_devops import server as azure_server
-
-        payload = azure_server._get_sprint_stories_detailed()
-        return _parse_legacy_json_dict(
-            payload,
-            invalid_message="O provider legado retornou as historias detalhadas do sprint em JSON invalido.",
-            root_message="O provider legado retornou um payload invalido para as historias detalhadas do sprint.",
         )
 
 
@@ -278,10 +261,8 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
         target_status = str(request["target_status"])
         expected_current_status = str(request.get("expected_current_status") or "").strip() or None
 
-        details = self._get_native_story_details(azure_server, story_id=story_id)
-        if details is None:
-            payload = azure_server._get_story_details(story_id)
-            details = self._parse_story_details(payload, story_id=story_id)
+        payload = azure_server._get_story_details(story_id)
+        details = self._parse_story_details(payload, story_id=story_id)
         current_status = details["current_status"]
         current_index = self._find_status_index(current_status)
         target_index = self._find_status_index(target_status)
@@ -366,44 +347,6 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
             return CANONICAL_STORY_STATUS_FLOW.index(status)
         return None
 
-    def _get_native_story_details(self, azure_server: Any, *, story_id: int) -> dict[str, Any] | None:
-        get_client = getattr(azure_server, "get_client", None)
-        if not callable(get_client):
-            return None
-
-        try:
-            connection = get_client()
-            wit = connection.clients.get_work_item_tracking_client()
-            item = wit.get_work_item(
-                id=story_id,
-                fields=[
-                    "System.Id",
-                    "System.Title",
-                    "System.State",
-                    "System.WorkItemType",
-                ],
-            )
-        except Exception:
-            return None
-
-        fields = getattr(item, "fields", {}) or {}
-        title = str(fields.get("System.Title") or "").strip()
-        current_status = str(fields.get("System.State") or "").strip()
-        if not title or not current_status:
-            return None
-
-        work_item_type = str(fields.get("System.WorkItemType") or "User Story").strip() or "User Story"
-        revision = getattr(item, "rev", None)
-        normalized_revision = str(revision).strip() if revision is not None else ""
-
-        return {
-            "title": title,
-            "current_status": current_status,
-            "work_item_type": work_item_type,
-            "url": getattr(item, "url", None),
-            "story_revision": normalized_revision or f"story-status-{story_id}-{current_status}",
-        }
-
     def _parse_story_details(self, payload: str, *, story_id: int) -> dict[str, Any]:
         header = f"=== KL-{story_id}: "
         title = None
@@ -428,79 +371,4 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
             "work_item_type": work_item_type,
             "url": url,
             "story_revision": story_revision or f"story-status-{story_id}-{current_status}",
-        }
-
-
-def _parse_iso_datetime(value: str, *, field_name: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(str(value).strip())
-    except ValueError as error:
-        raise RuntimeError(f"O campo '{field_name}' nao esta em um formato ISO 8601 valido: {value}") from error
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-class LegacyTaskClosureAdapter(TaskClosurePort):
-    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
-        task_id = int(request["task_id"])
-        start_time = _parse_iso_datetime(request["start_time"], field_name="start_time")
-        close_time_raw = str(request.get("close_time") or "").strip()
-        close_time = _parse_iso_datetime(close_time_raw, field_name="close_time") if close_time_raw else datetime.now(timezone.utc)
-
-        validation_messages: list[str] = []
-        if close_time < start_time:
-            validation_messages.append("O horario de fechamento nao pode ser anterior ao horario de inicio.")
-
-        elapsed_seconds = max((close_time - start_time).total_seconds(), 0.0)
-        computed_hours = math.ceil(elapsed_seconds / 3600) if elapsed_seconds > 0 else 0
-
-        explicit_hours = request.get("completed_work_hours")
-        completed_work_hours = float(explicit_hours) if explicit_hours is not None else float(computed_hours)
-        remaining_work_hours = request.get("remaining_work_hours")
-
-        return {
-            "task_id": task_id,
-            "start_time": start_time.isoformat(),
-            "close_time": close_time.isoformat(),
-            "elapsed_seconds": elapsed_seconds,
-            "computed_hours": computed_hours,
-            "completed_work_hours": completed_work_hours,
-            "remaining_work_hours": remaining_work_hours,
-            "target_status": "Closed",
-            "comment": request.get("comment"),
-            "closure_allowed": not validation_messages,
-            "validation_messages": validation_messages,
-        }
-
-    def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
-        preview = dict(request.get("preview", {}))
-        task_id = int(request["task_id"])
-        if not preview.get("closure_allowed"):
-            raise RuntimeError("O fechamento da task nao e permitido pelo preview atual; gere uma nova pre-visualizacao.")
-
-        completed_work_hours = preview.get("completed_work_hours")
-        remaining_work_hours = preview.get("remaining_work_hours")
-        comment = preview.get("comment")
-
-        _ensure_legacy_import_path()
-        from azure_devops import server as azure_server
-
-        effort_payload = azure_server._update_work_item_effort(
-            work_item_id=task_id,
-            completed_work_hours=completed_work_hours,
-            remaining_work_hours=remaining_work_hours,
-            comment=comment,
-        )
-        status_payload = azure_server._update_story_status(story_id=task_id, status="Closed")
-
-        return {
-            "status": "closed",
-            "task_id": task_id,
-            "completed_work_hours": completed_work_hours,
-            "remaining_work_hours": remaining_work_hours,
-            "target_status": "Closed",
-            "changed": True,
-            "effort_update": effort_payload,
-            "status_update": status_payload,
         }

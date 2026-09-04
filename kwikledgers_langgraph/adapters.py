@@ -48,19 +48,6 @@ class StoryStatusTransitionPort(Protocol):
         """Execute the story status transition."""
 
 
-class TaskClosurePort(Protocol):
-    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Return a normalized preview payload with computed closure hours for a task."""
-
-    def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Execute the task closure (effort update plus Closed status)."""
-
-
-class SprintStoriesPort(Protocol):
-    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Return the detailed current-sprint stories payload (description, acceptance criteria, children)."""
-
-
 @dataclass(frozen=True)
 class DailySummaryPorts:
     provider: DailySummaryProvider
@@ -82,13 +69,3 @@ class StoryBranchAssociationPorts:
 @dataclass(frozen=True)
 class StoryStatusTransitionPorts:
     statuses: StoryStatusTransitionPort
-
-
-@dataclass(frozen=True)
-class TaskClosurePorts:
-    closures: TaskClosurePort
-
-
-@dataclass(frozen=True)
-class SprintStoriesPorts:
-    stories: SprintStoriesPort
