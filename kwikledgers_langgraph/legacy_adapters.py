@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from kwikledgers_langgraph.adapters import (
     IdentityResolverPort,
     NotificationPort,
+    SprintStoriesProvider,
     StoryBranchAssociationPort,
     StoryPullRequestPort,
     StoryStatusTransitionPort,
+    TaskClosurePort,
 )
 
 
@@ -372,3 +376,78 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
             "url": url,
             "story_revision": story_revision or f"story-status-{story_id}-{current_status}",
         }
+
+
+class LegacyTaskClosureAdapter(TaskClosurePort):
+    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        task_id = int(request["task_id"])
+        start_time = self._parse_timestamp(request["start_time"])
+        close_time = self._parse_timestamp(request.get("close_time")) or datetime.now(timezone.utc)
+        elapsed_seconds = (close_time - start_time).total_seconds()
+        closure_allowed = elapsed_seconds >= 0
+        computed_hours = math.ceil(elapsed_seconds / 3600) if closure_allowed else 0
+        completed_work_hours = request.get("completed_work_hours")
+
+        return {
+            "task_id": task_id,
+            "start_time": start_time.isoformat(),
+            "close_time": close_time.isoformat(),
+            "elapsed_seconds": elapsed_seconds,
+            "computed_hours": computed_hours,
+            "completed_work_hours": float(completed_work_hours) if completed_work_hours is not None else float(computed_hours),
+            "remaining_work_hours": request.get("remaining_work_hours"),
+            "target_status": "Closed",
+            "comment": request.get("comment"),
+            "closure_allowed": closure_allowed,
+            "validation_messages": [] if closure_allowed else ["O horario de fechamento nao pode ser anterior ao horario de inicio."],
+        }
+
+    def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
+        preview = dict(request.get("preview", {}))
+        if not preview.get("closure_allowed"):
+            raise RuntimeError("O fechamento da task nao possui um preview valido.")
+
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+
+        task_id = int(request["task_id"])
+        effort_payload = azure_server._update_work_item_effort(
+            work_item_id=task_id,
+            completed_work_hours=preview.get("completed_work_hours"),
+            remaining_work_hours=preview.get("remaining_work_hours"),
+            comment=preview.get("comment"),
+        )
+        effort_result = _parse_legacy_json_dict(
+            effort_payload,
+            invalid_message="O fechamento legado retornou JSON invalido ao atualizar esforco.",
+            root_message="O fechamento legado retornou um payload raiz invalido ao atualizar esforco.",
+        )
+        status_result = azure_server._update_story_status(task_id, "Closed")
+        return {
+            "status": "closed",
+            "task_id": task_id,
+            "completed_work_hours": preview.get("completed_work_hours"),
+            "remaining_work_hours": preview.get("remaining_work_hours"),
+            "target_status": "Closed",
+            "changed": True,
+            "effort_result": effort_result,
+            "status_result": status_result,
+        }
+
+    def _parse_timestamp(self, value: Any) -> datetime | None:
+        if value is None or not str(value).strip():
+            return None
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+class LegacySprintStoriesProvider(SprintStoriesProvider):
+    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+
+        return _parse_legacy_json_dict(
+            azure_server._get_sprint_stories_detailed(),
+            invalid_message="O provider legado retornou historias detalhadas do sprint em JSON invalido.",
+            root_message="O provider legado retornou historias detalhadas do sprint em formato invalido.",
+        )

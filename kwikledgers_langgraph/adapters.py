@@ -48,6 +48,19 @@ class StoryStatusTransitionPort(Protocol):
         """Execute the story status transition."""
 
 
+class TaskClosurePort(Protocol):
+    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Build the deterministic preview for a task closure."""
+
+    def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Execute the atomic Azure updates required to close a task."""
+
+
+class SprintStoriesProvider(Protocol):
+    def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return detailed stories for the active sprint."""
+
+
 @dataclass(frozen=True)
 class DailySummaryPorts:
     provider: DailySummaryProvider
@@ -69,3 +82,13 @@ class StoryBranchAssociationPorts:
 @dataclass(frozen=True)
 class StoryStatusTransitionPorts:
     statuses: StoryStatusTransitionPort
+
+
+@dataclass(frozen=True)
+class TaskClosurePorts:
+    closures: TaskClosurePort
+
+
+@dataclass(frozen=True)
+class SprintStoriesPorts:
+    stories: SprintStoriesProvider
