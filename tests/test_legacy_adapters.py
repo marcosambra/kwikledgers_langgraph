@@ -69,7 +69,7 @@ class LegacyAdaptersTestCase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 _resolve_mcp_path()
 
-    def test_story_status_preview_blocks_jump_outside_canonical_flow(self) -> None:
+    def test_story_status_preview_returns_technical_snapshot_only(self) -> None:
         adapter = LegacyStoryStatusTransitionAdapter()
 
         with patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
@@ -83,8 +83,8 @@ class LegacyAdaptersTestCase(unittest.TestCase):
                         {"story_id": 120204, "target_status": "QA", "expected_current_status": "Desenvolvimento"}
                     )
 
-        self.assertFalse(preview["transition_allowed"])
         self.assertEqual(preview["current_status"], "Desenvolvimento")
+        self.assertNotIn("transition_allowed", preview)
 
     def test_story_status_update_rejects_revision_change_between_preview_and_execute(self) -> None:
         adapter = LegacyStoryStatusTransitionAdapter()

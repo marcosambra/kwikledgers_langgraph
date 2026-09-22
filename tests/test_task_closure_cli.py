@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -84,6 +85,17 @@ class FakeTaskClosureAdapter:
 
 
 class TaskClosureCliTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.signing_key_patcher = patch.dict(
+            os.environ,
+            {"KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY": "test-signing-key"},
+            clear=False,
+        )
+        self.signing_key_patcher.start()
+
+    def tearDown(self) -> None:
+        self.signing_key_patcher.stop()
+
     def test_build_request_maps_optional_and_required_fields(self) -> None:
         arguments = _build_arguments(completed_work_hours=3.0, remaining_work_hours=1.0, comment="fechamento")
 
@@ -249,7 +261,8 @@ class TaskClosureCliTestCase(unittest.TestCase):
                 saved_state = json.load(saved_file)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(saved_state["pending_approval"]["request_id"], "req-456")
+        self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-456")
+        self.assertIn("signature", saved_state)
 
     @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph nao esta instalado neste ambiente")
     def test_run_task_closure_replays_saved_state_and_executes_after_human_approval(self) -> None:
@@ -271,7 +284,6 @@ class TaskClosureCliTestCase(unittest.TestCase):
                     )
                 )
 
-        self.assertEqual(len(adapter.preview_calls), 2)
         self.assertEqual(len(adapter.execute_calls), 1)
         self.assertEqual(resume_result["task_closure_result"]["status"], "closed")
 

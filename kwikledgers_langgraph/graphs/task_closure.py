@@ -15,6 +15,7 @@ from kwikledgers_langgraph.graphs.mutable_flow import (
 )
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error
+from kwikledgers_langgraph.task_closure_policy import build_task_closure_preview
 
 
 def _required_request_fields() -> tuple[str, ...]:
@@ -69,7 +70,7 @@ def build_task_closure_graph(ports: TaskClosurePorts) -> Any:
             completed_message="Preview de fechamento da task calculado com sucesso.",
             tracking_category="task_closure_preview",
             tracking_message="Preview de fechamento de task gerado pelo runtime LangGraph.",
-            preview_operation=ports.closures.preview_task_closure,
+            preview_operation=build_task_closure_preview,
             tracking_payload_builder=lambda request, preview: {
                 "task_id": request.get("task_id"),
                 "computed_hours": preview.get("computed_hours"),

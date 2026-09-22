@@ -187,6 +187,11 @@ Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
 - approval gate padronizado com `request_id`, `preview` e `active_run_id`
 - execute com tratamento uniforme de falha e resultado operacional minimo
 
+Os estados salvos de fluxos mutáveis exigem `KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY`:
+- previews e retomadas são persistidos em envelope HMAC-SHA256
+- branch, PR, status e fechamento não aceitam arquivo mutável sem assinatura
+- `--approve-*` só é aceito quando `KWIKLEDGERS_LANGGRAPH_ALLOW_LOCAL_SIMULATION=1` estiver definido para teste
+
 Observabilidade externa minima:
 - por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`
 - esse resumo reaproveita o formato que o `kl_observatory` ja parseia, sem acoplar o runtime ao banco/API do observatory

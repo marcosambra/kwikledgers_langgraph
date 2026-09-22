@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,17 +14,6 @@ from kwikledgers_langgraph.adapters import (
     StoryPullRequestPort,
     StoryStatusTransitionPort,
     TaskClosurePort,
-)
-
-
-CANONICAL_STORY_STATUS_FLOW = (
-    "New",
-    "Refinamento",
-    "Backlog Sprint",
-    "Desenvolvimento",
-    "Aguardando PR",
-    "Homologação",
-    "QA",
 )
 
 
@@ -262,42 +249,14 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
         from azure_devops import server as azure_server
 
         story_id = int(request["story_id"])
-        target_status = str(request["target_status"])
-        expected_current_status = str(request.get("expected_current_status") or "").strip() or None
-
         payload = azure_server._get_story_details(story_id)
         details = self._parse_story_details(payload, story_id=story_id)
-        current_status = details["current_status"]
-        current_index = self._find_status_index(current_status)
-        target_index = self._find_status_index(target_status)
-        transition_allowed = current_index is not None and target_index is not None and target_index == current_index + 1
-
-        validation_messages: list[str] = []
-        if details["work_item_type"] and details["work_item_type"] != "User Story":
-            validation_messages.append("O item informado nao e uma User Story.")
-        if expected_current_status and expected_current_status != current_status:
-            validation_messages.append(
-                "O status atual da story nao corresponde ao status esperado informado no request."
-            )
-        if current_index is None:
-            validation_messages.append("O status atual da story nao faz parte do fluxo canonico esperado.")
-        if target_index is None:
-            validation_messages.append("O status de destino nao faz parte do fluxo canonico esperado.")
-        if not transition_allowed and current_index is not None and target_index is not None:
-            validation_messages.append("A transicao solicitada nao e a proxima etapa permitida no fluxo canonico.")
-
         return {
             "story_id": story_id,
             "title": details["title"],
             "work_item_type": details["work_item_type"],
             "url": details["url"],
-            "current_status": current_status,
-            "target_status": target_status,
-            "expected_current_status": expected_current_status,
-            "transition_allowed": not validation_messages and transition_allowed,
-            "validation_messages": validation_messages,
-            "canonical_flow": list(CANONICAL_STORY_STATUS_FLOW),
-            "patch_preview": {"System.State": target_status},
+            "current_status": details["current_status"],
             "story_revision": details["story_revision"],
         }
 
@@ -318,9 +277,6 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
                 raise RuntimeError("A story foi alterada apos o preview original; gere uma nova pre-visualizacao antes de atualizar o status.")
             if preview.get("current_status") != latest_preview.get("current_status"):
                 raise RuntimeError("O status atual da story mudou apos o preview original; gere uma nova pre-visualizacao antes de atualizar o status.")
-        if not latest_preview.get("transition_allowed"):
-            raise RuntimeError("A transicao de status solicitada nao e permitida pelo fluxo canonico da story.")
-
         _ensure_legacy_import_path()
         from azure_devops import server as azure_server
 
@@ -345,11 +301,6 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
         }
         result.update(parsed_payload)
         return result
-
-    def _find_status_index(self, status: str | None) -> int | None:
-        if status in CANONICAL_STORY_STATUS_FLOW:
-            return CANONICAL_STORY_STATUS_FLOW.index(status)
-        return None
 
     def _parse_story_details(self, payload: str, *, story_id: int) -> dict[str, Any]:
         header = f"=== KL-{story_id}: "
@@ -379,29 +330,6 @@ class LegacyStoryStatusTransitionAdapter(StoryStatusTransitionPort):
 
 
 class LegacyTaskClosureAdapter(TaskClosurePort):
-    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
-        task_id = int(request["task_id"])
-        start_time = self._parse_timestamp(request["start_time"])
-        close_time = self._parse_timestamp(request.get("close_time")) or datetime.now(timezone.utc)
-        elapsed_seconds = (close_time - start_time).total_seconds()
-        closure_allowed = elapsed_seconds >= 0
-        computed_hours = math.ceil(elapsed_seconds / 3600) if closure_allowed else 0
-        completed_work_hours = request.get("completed_work_hours")
-
-        return {
-            "task_id": task_id,
-            "start_time": start_time.isoformat(),
-            "close_time": close_time.isoformat(),
-            "elapsed_seconds": elapsed_seconds,
-            "computed_hours": computed_hours,
-            "completed_work_hours": float(completed_work_hours) if completed_work_hours is not None else float(computed_hours),
-            "remaining_work_hours": request.get("remaining_work_hours"),
-            "target_status": "Closed",
-            "comment": request.get("comment"),
-            "closure_allowed": closure_allowed,
-            "validation_messages": [] if closure_allowed else ["O horario de fechamento nao pode ser anterior ao horario de inicio."],
-        }
-
     def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
         preview = dict(request.get("preview", {}))
         if not preview.get("closure_allowed"):
@@ -433,13 +361,6 @@ class LegacyTaskClosureAdapter(TaskClosurePort):
             "effort_result": effort_result,
             "status_result": status_result,
         }
-
-    def _parse_timestamp(self, value: Any) -> datetime | None:
-        if value is None or not str(value).strip():
-            return None
-        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-
 
 class LegacySprintStoriesProvider(SprintStoriesProvider):
     def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:

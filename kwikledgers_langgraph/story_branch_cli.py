@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from kwikledgers_langgraph.backend_factory import build_story_branch_association_ports, resolve_backend_name
 from kwikledgers_langgraph.guardrails import build_approval_confirmation
 from kwikledgers_langgraph.observability import append_runtime_usage_metrics, build_observability_context
 from kwikledgers_langgraph.runtime import build_story_branch_association_runtime
 from kwikledgers_langgraph.state import AgentState, StoryBranchAssociationRequest
+from kwikledgers_langgraph.state_persistence import (
+    StateFileError,
+    assert_local_simulation_enabled,
+    load_state_file,
+    write_state_file,
+)
 
 
 class StoryBranchCliError(RuntimeError):
@@ -53,16 +58,9 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
 
 def _load_state_file(state_file_path: str) -> AgentState:
     try:
-        with Path(state_file_path).open("r", encoding="utf-8") as state_file:
-            payload = json.load(state_file)
-    except FileNotFoundError as error:
-        raise StoryBranchCliError(f"O arquivo de estado '{state_file_path}' nao foi encontrado.") from error
-    except json.JSONDecodeError as error:
-        raise StoryBranchCliError(f"O arquivo de estado '{state_file_path}' nao contem JSON valido.") from error
-
-    if not isinstance(payload, dict):
-        raise StoryBranchCliError("O arquivo de estado precisa conter um objeto JSON no nivel raiz.")
-    return cast(AgentState, payload)
+        return load_state_file(state_file_path)
+    except StateFileError as error:
+        raise StoryBranchCliError(str(error)) from error
 
 
 def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
@@ -115,6 +113,10 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
+    try:
+        assert_local_simulation_enabled(arguments.approve_association)
+    except StateFileError as error:
+        raise StoryBranchCliError(str(error)) from error
     if arguments.resume_state_file:
         if arguments.approve_association:
             raise StoryBranchCliError(
@@ -143,11 +145,7 @@ def _build_runtime_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _write_state_file(state: dict[str, Any], state_file_path: str) -> None:
-    output_path = Path(state_file_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as state_file:
-        json.dump(state, state_file, indent=2, ensure_ascii=False)
-        state_file.write("\n")
+    write_state_file(state, state_file_path)
 
 
 def run_story_branch_association(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -197,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--approve-association",
         action="store_true",
-        help="Simula aprovação local após o preview para testes e validação manual do runtime.",
+        help="Simula aprovação apenas em ambiente de teste explicitamente habilitado.",
     )
     parser.add_argument(
         "--resume-state-file",

@@ -11,11 +11,29 @@ from kwikledgers_langgraph.state import AgentState
 
 
 STATE_SIGNING_KEY_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY"
+LOCAL_SIMULATION_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_ALLOW_LOCAL_SIMULATION"
 STATE_SIGNATURE_ALGORITHM = "hmac-sha256"
+MUTABLE_STATE_KEYS = (
+    "pull_request_request",
+    "branch_association_request",
+    "story_status_request",
+    "task_closure_request",
+)
 
 
 class StateFileError(RuntimeError):
     """Raised when a saved runtime state file cannot be trusted or parsed."""
+
+
+def assert_local_simulation_enabled(requested: bool) -> None:
+    if not requested:
+        return
+    if os.environ.get(LOCAL_SIMULATION_ENV_VAR, "").strip() == "1":
+        return
+    raise StateFileError(
+        "A simulacao local de aprovacao e restrita a testes. "
+        f"Defina {LOCAL_SIMULATION_ENV_VAR}=1 somente em ambiente de teste."
+    )
 
 
 def _get_state_signing_key() -> str | None:
@@ -33,6 +51,10 @@ def _canonical_state_json(state: dict[str, Any]) -> str:
 def _build_state_signature(state: dict[str, Any], *, signing_key: str) -> str:
     payload = _canonical_state_json(state).encode("utf-8")
     return hmac.new(signing_key.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def _requires_signature(state: dict[str, Any]) -> bool:
+    return bool(state.get("pending_approval")) or any(state.get(key) for key in MUTABLE_STATE_KEYS)
 
 
 def load_state_file(state_file_path: str) -> AgentState:
@@ -76,6 +98,12 @@ def load_state_file(state_file_path: str) -> AgentState:
             "KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY esta configurada, mas o arquivo de estado nao esta assinado. Gere um novo preview antes de retomar a mutacao."
         )
 
+    if _requires_signature(payload):
+        raise StateFileError(
+            "O arquivo de estado de um fluxo mutavel precisa estar assinado. "
+            "Defina KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY e gere um novo preview antes de retomar."
+        )
+
     return cast(AgentState, payload)
 
 
@@ -83,6 +111,11 @@ def write_state_file(state: dict[str, Any], state_file_path: str) -> None:
     output_path = Path(state_file_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     signing_key = _get_state_signing_key()
+
+    if _requires_signature(state) and not signing_key:
+        raise StateFileError(
+            "Defina KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY para salvar estado de fluxo mutavel."
+        )
 
     payload: dict[str, Any]
     if signing_key:

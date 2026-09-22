@@ -49,9 +49,6 @@ class StoryStatusTransitionPort(Protocol):
 
 
 class TaskClosurePort(Protocol):
-    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Build the deterministic preview for a task closure."""
-
     def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
         """Execute the atomic Azure updates required to close a task."""
 

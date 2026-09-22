@@ -7,17 +7,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kwikledgers_langgraph.state_persistence import (
+    LOCAL_SIMULATION_ENV_VAR,
     STATE_SIGNATURE_ALGORITHM,
     STATE_SIGNING_KEY_ENV_VAR,
     StateFileError,
+    assert_local_simulation_enabled,
     load_state_file,
     write_state_file,
 )
 
 
 class StatePersistenceTestCase(unittest.TestCase):
-    def test_write_and_load_unsigned_state_without_signing_key(self) -> None:
-        state = {"pull_request_request": {"story_id": 120204}, "source": "test"}
+    def test_local_simulation_requires_explicit_test_environment(self) -> None:
+        with patch.dict("os.environ", {}, clear=False):
+            with self.assertRaises(StateFileError):
+                assert_local_simulation_enabled(True)
+
+        with patch.dict("os.environ", {LOCAL_SIMULATION_ENV_VAR: "1"}, clear=False):
+            assert_local_simulation_enabled(True)
+
+    def test_write_and_load_unsigned_read_only_state_without_signing_key(self) -> None:
+        state = {"summary": {"counts": {"assigned_items": 1}}, "source": "test"}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "state.json"
@@ -26,6 +36,15 @@ class StatePersistenceTestCase(unittest.TestCase):
                 loaded_state = load_state_file(str(path))
 
         self.assertEqual(loaded_state, state)
+
+    def test_write_rejects_unsigned_mutable_state(self) -> None:
+        state = {"pull_request_request": {"story_id": 120204}, "source": "test"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "state.json"
+            with patch.dict("os.environ", {}, clear=False):
+                with self.assertRaises(StateFileError):
+                    write_state_file(state, str(path))
 
     def test_write_and_load_signed_state_with_signing_key(self) -> None:
         state = {"branch_association_request": {"story_id": 120204}, "source": "test"}

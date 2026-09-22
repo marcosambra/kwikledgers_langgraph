@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "src/**"
+      - "kwikledgers_langgraph/**"
       - "tests/**"
       - "pyproject.toml"
       - "poetry.lock"
@@ -11,6 +12,7 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "kwikledgers_langgraph/**"
       - "tests/**"
       - "pyproject.toml"
       - "poetry.lock"
@@ -29,7 +31,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install Poetry
         run: |
@@ -53,3 +55,9 @@ jobs:
 
       - name: Validate story status CLI
         run: poetry run kwikledgers-langgraph-story-status --help
+
+      - name: Validate task closure CLI
+        run: poetry run kwikledgers-langgraph-task-closure --help
+
+      - name: Validate sprint stories CLI
+        run: poetry run kwikledgers-langgraph-sprint-stories --help

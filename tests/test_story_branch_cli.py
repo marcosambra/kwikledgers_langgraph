@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -72,6 +73,17 @@ class FakeStoryBranchAssociationAdapter:
 
 
 class StoryBranchCliTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.signing_key_patcher = patch.dict(
+            os.environ,
+            {"KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY": "test-signing-key"},
+            clear=False,
+        )
+        self.signing_key_patcher.start()
+
+    def tearDown(self) -> None:
+        self.signing_key_patcher.stop()
+
     def test_build_request_maps_optional_and_required_fields(self) -> None:
         arguments = _build_arguments()
 
@@ -213,7 +225,8 @@ class StoryBranchCliTestCase(unittest.TestCase):
                 saved_state = json.load(saved_file)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(saved_state["pending_approval"]["request_id"], "req-123")
+        self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-123")
+        self.assertIn("signature", saved_state)
 
     @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph nao esta instalado neste ambiente")
     def test_run_story_branch_association_replays_saved_state_and_executes_after_human_approval(self) -> None:

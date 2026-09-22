@@ -15,6 +15,7 @@ from kwikledgers_langgraph.graphs.mutable_flow import (
 )
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error, append_tracking_event
+from kwikledgers_langgraph.story_status_policy import build_story_status_transition_preview
 
 
 def _required_request_fields() -> tuple[str, ...]:
@@ -69,7 +70,10 @@ def build_story_status_transition_graph(ports: StoryStatusTransitionPorts) -> An
             completed_message="Preview da transicao de status gerado com sucesso.",
             tracking_category="story_status_preview",
             tracking_message="Preview da transicao de status da story gerado pelo runtime LangGraph.",
-            preview_operation=ports.statuses.preview_story_status_transition,
+            preview_operation=lambda request: build_story_status_transition_preview(
+                request,
+                ports.statuses.preview_story_status_transition(request),
+            ),
             tracking_payload_builder=lambda request, preview: {
                 "story_id": request.get("story_id"),
                 "current_status": preview.get("current_status"),

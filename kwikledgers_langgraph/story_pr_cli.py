@@ -12,7 +12,12 @@ from kwikledgers_langgraph.observability import (
 )
 from kwikledgers_langgraph.runtime import build_story_pull_request_runtime
 from kwikledgers_langgraph.state import AgentState, StoryPullRequestRequest
-from kwikledgers_langgraph.state_persistence import StateFileError, load_state_file, write_state_file
+from kwikledgers_langgraph.state_persistence import (
+    StateFileError,
+    assert_local_simulation_enabled,
+    load_state_file,
+    write_state_file,
+)
 
 
 class StoryPullRequestCliError(RuntimeError):
@@ -118,6 +123,10 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
+    try:
+        assert_local_simulation_enabled(arguments.approve_create)
+    except StateFileError as error:
+        raise StoryPullRequestCliError(str(error)) from error
     if arguments.resume_state_file:
         if arguments.approve_create:
             raise StoryPullRequestCliError("A flag '--approve-create' nao pode ser usada junto com '--resume-state-file'.")
@@ -214,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--approve-create",
         action="store_true",
-        help="Simula aprovação local após o preview para testes e validação manual do runtime.",
+        help="Simula aprovação apenas em ambiente de teste explicitamente habilitado.",
     )
     parser.add_argument(
         "--resume-state-file",
