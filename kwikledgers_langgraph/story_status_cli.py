@@ -11,7 +11,6 @@ from kwikledgers_langgraph.runtime import build_story_status_transition_runtime
 from kwikledgers_langgraph.state import AgentState, StoryStatusTransitionRequest
 from kwikledgers_langgraph.state_persistence import (
     StateFileError,
-    assert_local_simulation_enabled,
     load_state_file,
     write_state_file,
 )
@@ -50,8 +49,6 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
             backend_name=backend_name,
         ),
     }
-    if arguments.approve_transition:
-        state["approval_simulation_requested"] = True
     return state
 
 
@@ -112,15 +109,7 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
-    try:
-        assert_local_simulation_enabled(arguments.approve_transition)
-    except StateFileError as error:
-        raise StoryStatusCliError(str(error)) from error
     if arguments.resume_state_file:
-        if arguments.approve_transition:
-            raise StoryStatusCliError(
-                "A flag '--approve-transition' nao pode ser usada junto com '--resume-state-file'."
-            )
         if not arguments.approval_request_id:
             raise StoryStatusCliError("Informe '--approval-request-id' ao usar '--resume-state-file'.")
         return
@@ -182,11 +171,6 @@ def main(argv: list[str] | None = None) -> int:
         "--backend",
         default=None,
         help="Backend de integracao do runtime. O padrao atual e 'legacy'.",
-    )
-    parser.add_argument(
-        "--approve-transition",
-        action="store_true",
-        help="Simula aprovação apenas em ambiente de teste explicitamente habilitado.",
     )
     parser.add_argument(
         "--resume-state-file",

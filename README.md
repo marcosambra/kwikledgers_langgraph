@@ -166,20 +166,19 @@ O primeiro fluxo mutavel agora existe para PR de story, mas segue preview-first:
 - o preview da PR e sempre executado como leitura
 - o runtime emite um `pending_approval` com `request_id` proprio para o preview atual
 - a criacao da PR so segue quando uma `approval_confirmation` separada reaproveita esse `request_id`, o preview anterior e o `active_run_id` da execucao
-- o CLI dedicado aceita `--approve-create` apenas como simulacao local apos o preview,
-	nao como aprovacao real de producao
+- a CLI operacional nunca emite aprovacao automatica; a retomada exige confirmacao humana vinculada ao estado salvo
 
 O fluxo de associacao de branch da story segue o mesmo contrato preview-first:
 - o preview da associacao sempre roda como leitura
 - o runtime persiste `branch_association_preview`, `pending_approval.request_id` e `observability.active_run_id`
 - a associacao real so acontece quando uma retomada explicita usa o mesmo arquivo de estado salvo e o mesmo `request_id`
-- o CLI dedicado aceita `--approve-association` apenas como simulacao local para teste
+- a CLI operacional exige retomada com confirmacao humana para executar a associacao
 
 O fluxo de transicao de status da story segue o mesmo contrato preview-first:
 - o preview da transicao sempre roda como leitura e valida a proxima etapa do fluxo canonico
 - o runtime persiste `story_status_preview`, `pending_approval.request_id` e `observability.active_run_id`
 - a execucao real revalida status atual e revisao sintetizada antes de aplicar a mudanca
-- o CLI dedicado aceita `--approve-transition` apenas como simulacao local para teste
+- a CLI operacional exige retomada com confirmacao humana para executar a transicao
 
 Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
 - validacao minima de request obrigatorio
@@ -190,7 +189,9 @@ Os tres fluxos mutaveis agora compartilham o mesmo seam interno:
 Os estados salvos de fluxos mutáveis exigem `KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY`:
 - previews e retomadas são persistidos em envelope HMAC-SHA256
 - branch, PR, status e fechamento não aceitam arquivo mutável sem assinatura
-- `--approve-*` só é aceito quando `KWIKLEDGERS_LANGGRAPH_ALLOW_LOCAL_SIMULATION=1` estiver definido para teste
+- as flags `--approve-*` não fazem parte da superfície operacional; a simulação existe apenas nos testes diretos de grafo
+
+Quando um backend FastMCP mutável estiver ativo, o LangGraph emite uma capability HMAC curta após o approval gate. Ela vincula a tool FastMCP, o digest do payload, o `request_id`, o `active_run_id` e a expiração; o FastMCP apenas valida esse vínculo antes de executar a primitiva atômica.
 
 Observabilidade externa minima:
 - por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`

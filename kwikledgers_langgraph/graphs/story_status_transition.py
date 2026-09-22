@@ -106,6 +106,8 @@ def build_story_status_transition_graph(ports: StoryStatusTransitionPorts) -> An
             tracking_category="story_status_transition",
             tracking_message="Transicao de status da story executada pelo runtime LangGraph.",
             execute_operation=ports.statuses.update_story_status,
+            fastmcp_capability_name="update_story_status",
+            approval_action="story_status_transition.execute",
             request_builder=lambda request, state: {
                 **request,
                 "preview": dict(state.get("story_status_preview", {})),

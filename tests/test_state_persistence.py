@@ -7,25 +7,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kwikledgers_langgraph.state_persistence import (
-    LOCAL_SIMULATION_ENV_VAR,
     STATE_SIGNATURE_ALGORITHM,
     STATE_SIGNING_KEY_ENV_VAR,
     StateFileError,
-    assert_local_simulation_enabled,
     load_state_file,
     write_state_file,
 )
 
 
 class StatePersistenceTestCase(unittest.TestCase):
-    def test_local_simulation_requires_explicit_test_environment(self) -> None:
-        with patch.dict("os.environ", {}, clear=False):
-            with self.assertRaises(StateFileError):
-                assert_local_simulation_enabled(True)
-
-        with patch.dict("os.environ", {LOCAL_SIMULATION_ENV_VAR: "1"}, clear=False):
-            assert_local_simulation_enabled(True)
-
     def test_write_and_load_unsigned_read_only_state_without_signing_key(self) -> None:
         state = {"summary": {"counts": {"assigned_items": 1}}, "source": "test"}
 

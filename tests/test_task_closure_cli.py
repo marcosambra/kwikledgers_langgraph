@@ -119,12 +119,12 @@ class TaskClosureCliTestCase(unittest.TestCase):
         self.assertEqual(state["observability"]["flow_name"], "task_closure")
         self.assertEqual(state["observability"]["backend_name"], "legacy")
 
-    def test_build_initial_state_allows_explicit_local_approval_simulation(self) -> None:
+    def test_build_initial_state_does_not_allow_cli_approval_simulation(self) -> None:
         arguments = _build_arguments(approve_closure=True)
 
         state = _build_initial_state(arguments)
 
-        self.assertTrue(state["approval_simulation_requested"])
+        self.assertNotIn("approval_simulation_requested", state)
         self.assertNotIn("pending_approval", state)
 
     def test_build_runtime_state_rehydrates_saved_state_with_approval_confirmation(self) -> None:

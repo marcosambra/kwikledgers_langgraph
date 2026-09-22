@@ -14,7 +14,6 @@ from kwikledgers_langgraph.runtime import build_story_pull_request_runtime
 from kwikledgers_langgraph.state import AgentState, StoryPullRequestRequest
 from kwikledgers_langgraph.state_persistence import (
     StateFileError,
-    assert_local_simulation_enabled,
     load_state_file,
     write_state_file,
 )
@@ -71,8 +70,6 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
             backend_name=backend_name,
         ),
     }
-    if arguments.approve_create:
-        state["approval_simulation_requested"] = True
     return state
 
 
@@ -123,13 +120,7 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
-    try:
-        assert_local_simulation_enabled(arguments.approve_create)
-    except StateFileError as error:
-        raise StoryPullRequestCliError(str(error)) from error
     if arguments.resume_state_file:
-        if arguments.approve_create:
-            raise StoryPullRequestCliError("A flag '--approve-create' nao pode ser usada junto com '--resume-state-file'.")
         if not arguments.approval_request_id:
             raise StoryPullRequestCliError("Informe '--approval-request-id' ao usar '--resume-state-file'.")
         return
@@ -219,11 +210,6 @@ def main(argv: list[str] | None = None) -> int:
         "--new-queue-or-command",
         default=None,
         help="Nova fila ou comando operacional criado, se houver.",
-    )
-    parser.add_argument(
-        "--approve-create",
-        action="store_true",
-        help="Simula aprovação apenas em ambiente de teste explicitamente habilitado.",
     )
     parser.add_argument(
         "--resume-state-file",

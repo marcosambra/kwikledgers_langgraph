@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
 from kwikledgers_langgraph.guardrails import (
     OperationKind,
     allow_without_approval,
@@ -225,6 +226,8 @@ def run_execute_step(
     tracking_message: str,
     execute_operation: Callable[[dict[str, Any]], dict[str, Any]],
     request_builder: RequestBuilder | None = None,
+    fastmcp_capability_name: str | None = None,
+    approval_action: str | None = None,
     tracking_payload_builder: PayloadBuilder | None = None,
     completed_payload_builder: PayloadBuilder | None = None,
 ) -> dict[str, Any]:
@@ -236,6 +239,17 @@ def run_execute_step(
     )
     request = dict(state.get(request_key, {}))
     effective_request = request_builder(request, state) if request_builder is not None else request
+    backend_name = str(dict(state.get("observability", {})).get("backend_name") or "legacy").strip().lower()
+    if backend_name == "fastmcp" and fastmcp_capability_name:
+        effective_request = {
+            **effective_request,
+            "execution_capability": issue_execution_capability(
+                state,
+                action=approval_action or node,
+                capability_name=fastmcp_capability_name,
+                arguments=effective_request,
+            ),
+        }
     try:
         result = execute_operation(effective_request)
     except Exception as error:

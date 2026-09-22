@@ -11,7 +11,6 @@ from kwikledgers_langgraph.state import AgentState
 
 
 STATE_SIGNING_KEY_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY"
-LOCAL_SIMULATION_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_ALLOW_LOCAL_SIMULATION"
 STATE_SIGNATURE_ALGORITHM = "hmac-sha256"
 MUTABLE_STATE_KEYS = (
     "pull_request_request",
@@ -23,17 +22,6 @@ MUTABLE_STATE_KEYS = (
 
 class StateFileError(RuntimeError):
     """Raised when a saved runtime state file cannot be trusted or parsed."""
-
-
-def assert_local_simulation_enabled(requested: bool) -> None:
-    if not requested:
-        return
-    if os.environ.get(LOCAL_SIMULATION_ENV_VAR, "").strip() == "1":
-        return
-    raise StateFileError(
-        "A simulacao local de aprovacao e restrita a testes. "
-        f"Defina {LOCAL_SIMULATION_ENV_VAR}=1 somente em ambiente de teste."
-    )
 
 
 def _get_state_signing_key() -> str | None:

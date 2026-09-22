@@ -11,7 +11,6 @@ from kwikledgers_langgraph.runtime import build_story_branch_association_runtime
 from kwikledgers_langgraph.state import AgentState, StoryBranchAssociationRequest
 from kwikledgers_langgraph.state_persistence import (
     StateFileError,
-    assert_local_simulation_enabled,
     load_state_file,
     write_state_file,
 )
@@ -51,8 +50,6 @@ def _build_initial_state(arguments: argparse.Namespace) -> AgentState:
             backend_name=backend_name,
         ),
     }
-    if arguments.approve_association:
-        state["approval_simulation_requested"] = True
     return state
 
 
@@ -113,15 +110,7 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
-    try:
-        assert_local_simulation_enabled(arguments.approve_association)
-    except StateFileError as error:
-        raise StoryBranchCliError(str(error)) from error
     if arguments.resume_state_file:
-        if arguments.approve_association:
-            raise StoryBranchCliError(
-                "A flag '--approve-association' nao pode ser usada junto com '--resume-state-file'."
-            )
         if not arguments.approval_request_id:
             raise StoryBranchCliError("Informe '--approval-request-id' ao usar '--resume-state-file'.")
         return
@@ -191,11 +180,6 @@ def main(argv: list[str] | None = None) -> int:
         "--exclude-child-work-items",
         action="store_true",
         help="Não inclui child work items automaticamente no preview.",
-    )
-    parser.add_argument(
-        "--approve-association",
-        action="store_true",
-        help="Simula aprovação apenas em ambiente de teste explicitamente habilitado.",
     )
     parser.add_argument(
         "--resume-state-file",
