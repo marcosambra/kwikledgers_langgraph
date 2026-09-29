@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kwikledgers_langgraph.fastmcp_adapters import ExecutionCapabilityProvider
+    from kwikledgers_langgraph.fastmcp_client import CapabilityClient
 
 from kwikledgers_langgraph.adapters import (
     DailySummaryPorts,
@@ -45,7 +50,10 @@ def resolve_backend_name(explicit_backend: str | None = None) -> str:
     return backend_name
 
 
-def build_daily_summary_ports(*, backend_name: str, notifications_enabled: bool) -> DailySummaryPorts:
+def build_daily_summary_ports(
+    *, backend_name: str, notifications_enabled: bool, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> DailySummaryPorts:
     if backend_name == LEGACY_BACKEND:
         notifications = LegacyNotificationAdapter() if notifications_enabled else NoOpNotificationAdapter()
         return DailySummaryPorts(
@@ -56,54 +64,100 @@ def build_daily_summary_ports(*, backend_name: str, notifications_enabled: bool)
         )
 
     if backend_name == FASTMCP_BACKEND:
-        raise BackendSelectionError(
-            "O backend 'fastmcp' foi pausado por decisao atual da arquitetura. "
-            "Mantenha o runtime em 'legacy' e concentre a evolucao no LangGraph."
+        from kwikledgers_langgraph.fastmcp_adapters import (
+            FastMCPDailySummaryProvider, FastMCPNotificationAdapter, FastMCPTrackingSyncAdapter,
+        )
+        from kwikledgers_langgraph.fastmcp_client import FastMCPClient
+
+        capability_client = client if client is not None else FastMCPClient()
+        return DailySummaryPorts(
+            identity=EnvironmentIdentityResolverAdapter(),
+            provider=FastMCPDailySummaryProvider(capability_client),
+            tracking=FastMCPTrackingSyncAdapter(capability_client, execution_capability_provider),
+            notifications=(FastMCPNotificationAdapter(capability_client, execution_capability_provider)
+                           if notifications_enabled else NoOpNotificationAdapter()),
         )
 
     raise BackendSelectionError("Backend invalido para a capability 'daily_summary'.")
 
 
-def build_story_pull_request_ports(*, backend_name: str) -> StoryPullRequestPorts:
+def build_story_pull_request_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryPullRequestPorts:
     if backend_name == LEGACY_BACKEND:
         return StoryPullRequestPorts(pull_requests=LegacyStoryPullRequestAdapter())
 
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryPullRequestAdapter
+
+        return StoryPullRequestPorts(pull_requests=FastMCPStoryPullRequestAdapter(client, execution_capability_provider))
+
     raise BackendSelectionError(
-        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'story_pull_request'."
+        "Backend invalido para a capability 'story_pull_request'."
     )
 
 
-def build_story_branch_association_ports(*, backend_name: str) -> StoryBranchAssociationPorts:
+def build_story_branch_association_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryBranchAssociationPorts:
     if backend_name == LEGACY_BACKEND:
         return StoryBranchAssociationPorts(branches=LegacyStoryBranchAssociationAdapter())
 
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryBranchAssociationAdapter
+
+        return StoryBranchAssociationPorts(branches=FastMCPStoryBranchAssociationAdapter(client, execution_capability_provider))
+
     raise BackendSelectionError(
-        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'story_branch_association'."
+        "Backend invalido para a capability 'story_branch_association'."
     )
 
 
-def build_story_status_transition_ports(*, backend_name: str) -> StoryStatusTransitionPorts:
+def build_story_status_transition_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryStatusTransitionPorts:
     if backend_name == LEGACY_BACKEND:
         return StoryStatusTransitionPorts(statuses=LegacyStoryStatusTransitionAdapter())
 
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryStatusTransitionAdapter
+
+        return StoryStatusTransitionPorts(statuses=FastMCPStoryStatusTransitionAdapter(client, execution_capability_provider))
+
     raise BackendSelectionError(
-        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'story_status_transition'."
+        "Backend invalido para a capability 'story_status_transition'."
     )
 
 
-def build_task_closure_ports(*, backend_name: str) -> TaskClosurePorts:
+def build_task_closure_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> TaskClosurePorts:
     if backend_name == LEGACY_BACKEND:
         return TaskClosurePorts(closures=LegacyTaskClosureAdapter())
 
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPTaskClosureAdapter
+
+        return TaskClosurePorts(closures=FastMCPTaskClosureAdapter(client, execution_capability_provider))
+
     raise BackendSelectionError(
-        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'task_closure'."
+        "Backend invalido para a capability 'task_closure'."
     )
 
 
-def build_sprint_stories_ports(*, backend_name: str) -> SprintStoriesPorts:
+def build_sprint_stories_ports(*, backend_name: str, client: CapabilityClient | None = None) -> SprintStoriesPorts:
     if backend_name == LEGACY_BACKEND:
         return SprintStoriesPorts(stories=LegacySprintStoriesProvider())
 
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPSprintStoriesProvider
+
+        return SprintStoriesPorts(stories=FastMCPSprintStoriesProvider(client))
+
     raise BackendSelectionError(
-        "O backend 'fastmcp' ainda nao esta disponivel para a capability 'sprint_stories'."
+        "Backend invalido para a capability 'sprint_stories'."
     )
