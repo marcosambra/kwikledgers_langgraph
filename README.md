@@ -9,9 +9,10 @@ Objetivos deste primeiro slice:
 - definir estado tipado e portas de integracao independentes do MCP atual
 - compilar o primeiro subgrafo de `Daily Summary`
 
-Este repositório ainda nao substitui o runtime atual por completo. Ele define a
-base do novo runtime em LangGraph para que os adapters de Azure, tracking local
 e notificacoes sejam plugados sem editar o runtime legado nesta fase.
+Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
+aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
+O backend padrão é `fastmcp`; `legacy` existe somente como rollback temporário.
 
 ## Modo de repositorio standalone
 
@@ -81,6 +82,31 @@ poetry run kwikledgers-langgraph-story-branch --help
 ```bash
 poetry run kwikledgers-langgraph-story-status --help
 ```
+
+## Fechamento de tarefas
+
+A única exceção autônoma de escrita no Azure é o fluxo `day_end_closure`:
+lançamento de horas e fechamento da task; se houver trabalho pendente às 18h,
+criação de uma task de continuação. As demais operações mantêm aprovação prévia.
+
+```bash
+poetry install --extras legacy
+poetry run python -m kwikledgers_langgraph.day_end_closure_cli --trigger manual --timezone America/Sao_Paulo --dry-run
+bash scripts/register-day-end-closure.sh
+```
+
+O agendamento roda de segunda a sexta às 18h, no horário de São Paulo, e exige
+WSL e cron ativos. O comando da extensão **KwikLedgers: Fechamento de Fim de Dia
+(manual)** oferece dry run ou execução. Sem atividade vinculada à task, o fluxo
+não lança horas; várias tasks ativas sem seleção explícita impedem o fechamento.
+
+O hook de conclusão exige testes aprovados, evidência separada de trabalho e
+evento da mesma sessão. Usa o horário registrado da conclusão e bloqueia sessões
+de implementação somente local. Atualização atômica com revisão e journal local
+evita repetir lançamentos. Falhas parciais exigem conferência antes de nova escrita.
+
+Na extensão, alertas de ociosidade estão habilitados. A continuação usa apenas
+arquivos locais, sem commit, push, PR ou alteração no Azure.
 
 ## Validacao rapida
 
@@ -278,3 +304,69 @@ poetry run kwikledgers-langgraph-story-status \
 
 Evoluir a emissao de observabilidade minima para sinais mais ricos no stack,
 sem perder o contrato enxuto de preview, tracking e timeline.
+
+## Processos de Lifecycle
+
+Os novos processos são isolados dos builders e CLIs legados. Nenhum backend
+Azure, git, FastMCP ou executor de código está conectado automaticamente.
+Os testes adicionados ainda precisam de execução; mocks não comprovam paridade
+operacional com o agente legado.
+
+Builders públicos:
+
+- `graphs.story_lifecycle.build_story_start_graph(ports, checkpointer=...)`:
+	horário local primeiro, prévia de atribuição/Area/Active, aprovação humana,
+	seleção de feature/hotfix, prévia e aprovação da branch a partir do HEAD
+	remoto de stage-pre-prod, associação aprovada do pai e das children.
+- `graphs.story_lifecycle.build_story_completion_graph(ports, checkpointer=...)`:
+	vínculos aprovados, prévia e aprovação da PR Draft usando template/Mermaid,
+	URL direta no resultado, nova aprovação independente de Aguardando PR.
+- `graphs.task_lifecycle.build_task_cycle_graph(ports, checkpointer=...)`:
+	evidência de início concluído, plano aprovado, implementação, testes,
+	commit aprovado, horário de fechamento, horas com ceil e aprovação,
+	prévia e aprovação independentes de Closed. Remaining Work não é enviado.
+- `graphs.technical_debt_preparation.build_technical_debt_preparation_graph(ports)`:
+	similaridade, contexto local, HTML seguro, Fibonacci, prévia completa de
+	pai/filhas e cache quando houver indício de implementação. Não cria itens.
+- `graphs.process_snapshot.build_process_snapshot_graph(ports)`:
+	separação técnico/frontend/operacional, bloqueios/devoluções, todos os tipos
+	e estados de tasks, e recomendações de cadência de prazos. Não agenda nem
+	envia notificações.
+
+As três orquestrações mutáveis também estão no registry independente
+`lifecycle_runtime.LIFECYCLE_BUILDERS`; a fábrica é `build_lifecycle_runtime`.
+Não houve alteração do registry existente de runtime, das CLIs ou do Studio.
+
+Exemplo de ida e retomada, com portas e checkpointer fornecidos pelo host:
+
+```python
+from langgraph.types import Command
+from kwikledgers_langgraph.lifecycle_runtime import build_lifecycle_runtime
+
+graph = build_lifecycle_runtime("story_start", ports, checkpointer=trusted_checkpointer)
+config = {"configurable": {"thread_id": authorized_thread_id}}
+result = graph.invoke({"request": {
+		"story_id": story_id,
+		"task_id": child_id,
+		"repository_name": repository_name,
+}}, config)
+pending = result["pending_approval"]
+result = graph.invoke(Command(resume=authenticated_human_receipt), config)
+```
+
+Após a aprovação de Active, a próxima interrupção solicita a seleção explícita:
+`graph.invoke(Command(resume="feature"), config)` ou `"hotfix"`. Os próximos
+gates exigem recibos novos vinculados às respectivas prévias. Uma rejeição
+encerra o processo; não há aprovação automática nem bypass de produção.
+
+`LifecyclePorts`, `TechnicalDebtPreparationPorts` e `ProcessSnapshotPorts`
+estão em `adapters.py`. O host deve implementar autenticação/autorização de
+threads e recibos, revalidação CAS, allowlist de repositórios, planos confiáveis,
+idempotência por chave e tracking durável em AI_Tracking. `MemorySaver` serve
+para testes locais, não para persistência operacional.
+
+```bash
+poetry run python -m unittest discover -s tests -p 'test_lifecycle*.py'
+poetry run python -m unittest discover -s tests -p 'test_process_policy.py'
+poetry run python -m unittest discover -s tests
+```

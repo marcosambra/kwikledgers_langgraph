@@ -65,6 +65,16 @@ class TaskClosureRequest(TypedDict, total=False):
     comment: str
 
 
+class DayEndClosureRequest(TypedDict, total=False):
+    trigger: str
+    task_id: int
+    cutoff_time: str
+    timezone: str
+    now: str
+    dry_run: bool
+    create_continuation: bool
+
+
 class ApprovalRequest(TypedDict, total=False):
     action: str
     preview: dict[str, Any]
@@ -117,6 +127,10 @@ class AgentState(TypedDict, total=False):
     task_closure_request: TaskClosureRequest
     task_closure_preview: dict[str, Any]
     task_closure_result: dict[str, Any]
+    day_end_closure_request: DayEndClosureRequest
+    day_end_closure_context: dict[str, Any]
+    day_end_closure_preview: dict[str, Any]
+    day_end_closure_result: dict[str, Any]
     sprint_stories_request: dict[str, Any]
     sprint_stories_result: dict[str, Any]
     pending_approval: ApprovalRequest

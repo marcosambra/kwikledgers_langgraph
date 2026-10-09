@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from kwikledgers_langgraph.fastmcp_adapters import technical_arguments_for_capability
 from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
 from kwikledgers_langgraph.guardrails import (
     OperationKind,
@@ -10,6 +11,8 @@ from kwikledgers_langgraph.guardrails import (
     build_approval_confirmation,
     build_bound_approval,
     evaluate_operation,
+    is_legacy_backend,
+    require_signed_execution_approval,
 )
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error, append_tracking_event
@@ -161,7 +164,7 @@ def run_mutation_gate(
     preview = dict(state.get(preview_key, {}))
     evaluation_state: AgentState = state
     simulation_updates: dict[str, Any] = {}
-    if state.get("approval_simulation_requested"):
+    if state.get("approval_simulation_requested") and is_legacy_backend(state):
         simulated_pending = build_bound_approval(
             state,
             action=action,
@@ -238,19 +241,18 @@ def run_execute_step(
         message=started_message,
     )
     request = dict(state.get(request_key, {}))
-    effective_request = request_builder(request, state) if request_builder is not None else request
-    backend_name = str(dict(state.get("observability", {})).get("backend_name") or "legacy").strip().lower()
-    if backend_name == "fastmcp" and fastmcp_capability_name:
-        effective_request = {
-            **effective_request,
-            "execution_capability": issue_execution_capability(
+    try:
+        effective_request = request_builder(request, state) if request_builder is not None else dict(request)
+        effective_request.pop("execution_capability", None)
+        backend_name = str(dict(state.get("observability", {})).get("backend_name") or "fastmcp").strip().lower()
+        if backend_name != "legacy" and fastmcp_capability_name:
+            require_signed_execution_approval(state, action=approval_action or node)
+            effective_request["execution_capability"] = issue_execution_capability(
                 state,
                 action=approval_action or node,
                 capability_name=fastmcp_capability_name,
-                arguments=effective_request,
-            ),
-        }
-    try:
+                arguments=technical_arguments_for_capability(fastmcp_capability_name, effective_request),
+            )
         result = execute_operation(effective_request)
     except Exception as error:
         error_updates = append_error(state, f"{failed_message}: {error}")

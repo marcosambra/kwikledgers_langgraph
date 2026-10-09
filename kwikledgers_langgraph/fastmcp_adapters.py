@@ -80,7 +80,8 @@ def technical_arguments_for_capability(capability_name: str, request: dict[str, 
                 "Resumo diario sincronizado pelo runtime LangGraph. "
                 f"Itens atribuidos: {counts.get('assigned_items', 0)}. "
                 f"Bloqueados: {blocked}. PRs abertas: {counts.get('open_prs', 0)}. "
-                f"Story points restantes: {summary.get('remaining_story_points', '-')}.",
+                f"Story points restantes: {summary.get('remaining_story_points', '-')}"
+                "."
             ),
             "urgency": "high" if blocked else "normal",
         }
@@ -88,9 +89,19 @@ def technical_arguments_for_capability(capability_name: str, request: dict[str, 
         raise ValueError("Unsupported FastMCP argument mapping.")
     arguments = {field: request[field] for field in fields if field in request}
     if capability_name in {"associate_story_branch", "create_story_pull_request"}:
-        for field in ("expected_revision", "expected_revisions"):
-            if field in request:
-                arguments[field] = request[field]
+        preview = request.get("preview", {})
+        if not isinstance(preview, dict):
+            raise ValueError("A structured approved preview is required.")
+        revisions = preview.get("expected_revisions") if preview else request.get("expected_revisions")
+        if not isinstance(revisions, dict) or not revisions:
+            raise ValueError("Approved expected_revisions are required for every branch/PR target.")
+        if any(type(value) is not int or value <= 0 for value in revisions.values()):
+            raise ValueError("Approved revisions must be positive native integers.")
+        if "expected_revisions" in request and request["expected_revisions"] != revisions:
+            raise ValueError("Revisions do not match the approved preview.")
+        if "expected_revision" in request and request["expected_revision"] != revisions.get(str(request["story_id"]), revisions.get(request["story_id"])):
+            raise ValueError("Story revision does not match the approved preview.")
+        arguments["expected_revisions"] = dict(revisions)
     return arguments
 
 
@@ -175,6 +186,7 @@ class FastMCPStoryStatusTransitionAdapter(_FastMCPAdapter):
             "work_item_type": details.get("work_item_type", fields.get("System.WorkItemType")),
             "url": details.get("url"),
             "current_status": status,
+            "target_status": request.get("target_status"),
             "story_revision": revision,
         }
 
@@ -192,6 +204,16 @@ class FastMCPStoryStatusTransitionAdapter(_FastMCPAdapter):
 
 
 class FastMCPTaskClosureAdapter(_FastMCPAdapter):
+    def preview_task_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        task_id = int(request["task_id"])
+        details = self.client.call("get_story_details", {"story_id": task_id})
+        revision = details.get("revision", details.get("rev", details.get("task_revision")))
+        if type(revision) is not int or revision <= 0:
+            raise ValueError("Native task details must include a positive revision.")
+        if details.get("task_id", details.get("story_id", details.get("id", task_id))) != task_id:
+            raise ValueError("Native task details belong to a different task.")
+        return {"task_id": task_id, "task_revision": revision}
+
     def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
         arguments = technical_arguments_for_capability("update_work_item_effort", request)
         result = self._execute("update_work_item_effort", arguments, request.get("execution_capability"))

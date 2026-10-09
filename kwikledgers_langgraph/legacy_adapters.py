@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from kwikledgers_langgraph.adapters import (
+    DayEndClosurePort,
     IdentityResolverPort,
     NotificationPort,
     SprintStoriesProvider,
@@ -361,6 +363,166 @@ class LegacyTaskClosureAdapter(TaskClosurePort):
             "effort_result": effort_result,
             "status_result": status_result,
         }
+
+class LegacyDayEndClosureAdapter(DayEndClosurePort):
+    _ACTIVE_STATES = {"active", "ativa", "em andamento"}
+
+    def collect_day_context(self, request: dict[str, Any]) -> dict[str, Any]:
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+        from local_tracking import server as tracking_server
+
+        from kwikledgers_langgraph.day_end_closure_policy import (
+            _human_activity_timestamps, _resolve_timezone, parse_daily_log_entries,
+        )
+
+        zone = _resolve_timezone(request.get("timezone"))
+        current = datetime.now(zone)
+        entries: list[dict[str, str]] = []
+        stamps = {(current + timedelta(days=offset)).astimezone(timezone.utc).date().isoformat() for offset in (-1, 0, 1)}
+        for stamp in stamps | {current.date().isoformat()}:
+            log_path = tracking_server.DAILY_LOG_DIR / f"{stamp}.md"
+            if log_path.exists():
+                entries.extend(parse_daily_log_entries(log_path.read_text(encoding="utf-8")))
+        if not _human_activity_timestamps(entries, current.date(), zone):
+            return {"active_tasks": [], "activity_entries": entries}
+        journal_dir = tracking_server.TRACKING_DIR / "Task_Control" / "day-end-closures"
+        for journal in journal_dir.glob("*.json"):
+            if json.loads(journal.read_text(encoding="utf-8")).get("phase") != "completed":
+                raise RuntimeError(f"Fechamento incompleto em {journal.name}; verifique o Azure antes de novos lancamentos.")
+
+        email = azure_server._resolve_active_user_email()
+        if not email:
+            raise RuntimeError("Nao foi possivel resolver o usuario ativo do Azure DevOps.")
+        wit = azure_server.get_client().clients.get_work_item_tracking_client()
+
+        active_tasks: list[dict[str, Any]] = []
+        for item in azure_server._query_assigned_items(email):
+            if str(item.get("work_item_type", "")).lower() != "task":
+                continue
+            if str(item.get("state", "")).strip().lower() not in self._ACTIVE_STATES:
+                continue
+            work_item = wit.get_work_item(id=int(item["id"]), expand="Relations")
+            fields = work_item.fields or {}
+            active_tasks.append({
+                "id": item["id"],
+                "title": item.get("title"),
+                "revision": work_item.rev,
+                "parent_id": self._parent_id(work_item),
+                "area_path": fields.get("System.AreaPath"),
+                "iteration_path": fields.get("System.IterationPath"),
+                "assigned_to": email,
+                "activated_at": str(fields.get("Microsoft.VSTS.Common.ActivatedDate") or "") or None,
+                "completed_work_hours": fields.get("Microsoft.VSTS.Scheduling.CompletedWork"),
+            })
+
+        return {"active_tasks": active_tasks, "activity_entries": entries}
+
+    @staticmethod
+    def _parent_id(work_item: Any) -> int | None:
+        for relation in getattr(work_item, "relations", None) or []:
+            if getattr(relation, "rel", None) == "System.LinkTypes.Hierarchy-Reverse":
+                return int(str(relation.url).rstrip("/").rsplit("/", 1)[-1])
+        return None
+
+    def execute_day_end_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        preview = dict(request.get("preview", {}))
+        if preview.get("status") != "ready" or preview.get("dry_run") or request.get("dry_run"):
+            raise RuntimeError("O fechamento de fim de dia nao possui um preview pronto para execucao.")
+
+        _ensure_legacy_import_path()
+        from azure_devops import server as azure_server
+        from local_tracking import server as tracking_server
+
+        task_id = int(preview["task"]["id"])
+        wit = azure_server.get_client().clients.get_work_item_tracking_client()
+        current = wit.get_work_item(id=task_id)
+        fields = current.fields or {}
+        assigned = fields.get("System.AssignedTo") or {}
+        email = assigned.get("uniqueName") if isinstance(assigned, dict) else str(assigned)
+        if (
+            current.rev != preview.get("expected_revision")
+            or str(fields.get("System.WorkItemType", "")).lower() != "task"
+            or str(fields.get("System.State", "")).lower() not in self._ACTIVE_STATES
+            or str(email).casefold() != str(preview.get("assigned_to", "")).casefold()
+            or str(email).casefold() != str(azure_server._resolve_active_user_email()).casefold()
+        ):
+            raise RuntimeError("A task mudou desde o preview; nenhuma hora foi lancada.")
+        journal_dir = tracking_server.TRACKING_DIR / "Task_Control" / "day-end-closures"
+        journal_dir.mkdir(parents=True, exist_ok=True)
+        journal_path = journal_dir / f"{task_id}.json"
+        try:
+            with journal_path.open("x", encoding="utf-8") as handle:
+                json.dump({"phase": "started", "preview": preview}, handle, ensure_ascii=False)
+        except FileExistsError as error:
+            raise RuntimeError("Este fechamento ja foi iniciado; confira o registro local antes de repetir.") from error
+
+        def save_phase(phase: str, **updates: Any) -> None:
+            journal_path.write_text(json.dumps({"phase": phase, "preview": preview, **updates}, ensure_ascii=False), encoding="utf-8")
+
+        tracking_server._append_daily_action_log(
+            f"Preview de fechamento da task {task_id}",
+            f"Inicio: {preview['window_start']}. Fechamento: {preview['window_end']}. Horas: {preview['computed_hours']}.",
+            "day-end-closure",
+        )
+        wit.update_work_item(id=task_id, document=[
+            {"op": "test", "path": "/rev", "value": current.rev},
+            {"op": "add", "path": "/fields/Microsoft.VSTS.Scheduling.CompletedWork", "value": preview["completed_work_hours"]},
+            {"op": "add", "path": "/fields/System.State", "value": "Closed"},
+            {"op": "add", "path": "/fields/System.History", "value": preview.get("comment")},
+        ])
+        save_phase("closed")
+        result: dict[str, Any] = {
+            "status": "closed",
+            "task_id": task_id,
+            "completed_work_hours": preview["completed_work_hours"],
+            "changed": True,
+        }
+
+        continuation = preview.get("continuation")
+        if continuation:
+            try:
+                if not continuation.get("parent_id") or continuation.get("assigned_to") != preview.get("assigned_to"):
+                    raise RuntimeError("A continuacao precisa da historia pai e do mesmo usuario.")
+                document = [
+                    {"op": "add", "path": "/fields/" + field, "value": value}
+                    for field, value in {
+                        "System.Title": continuation["title"],
+                        "System.State": "Active",
+                        "System.AssignedTo": continuation["assigned_to"],
+                        "System.AreaPath": continuation.get("area_path"),
+                        "System.IterationPath": continuation.get("iteration_path"),
+                        "System.Tags": f"kwikledgers-continuation-{task_id}",
+                    }.items() if value is not None
+                ]
+                azure_server._append_parent_relation_patch(document, int(continuation["parent_id"]))
+                save_phase("continuation_requested")
+                created = wit.create_work_item(document=document, project=azure_server.get_project(), type="Task")
+                new_id = int(created.id)
+                save_phase("continuation_created", continuation_task_id=new_id)
+                result["continuation_task_id"] = new_id
+            except Exception as error:
+                result.update({"status": "closed_continuation_failed", "continuation_error": str(error)})
+
+        tracking_server._append_daily_action_log(
+            f"Fechamento de fim de dia da task {task_id}",
+            (
+                f"Horas lancadas: {preview['computed_hours']}h (total {preview['completed_work_hours']}h) ate "
+                f"{preview['window_end']}. Gatilho: {preview.get('trigger')}. "
+                f"Task de continuacao: {result.get('continuation_task_id', 'nao criada')}."
+            ),
+            "day-end-closure",
+        )
+        save_phase("completed" if result["status"] == "closed" else "needs_attention", result=result)
+        return result
+
+
+def send_legacy_notification(title: str, message: str, urgency: str = "normal") -> Any:
+    _ensure_legacy_import_path()
+    from windows_calendar import server as windows_server
+
+    return windows_server._send_notification(title, message, urgency)
+
 
 class LegacySprintStoriesProvider(SprintStoriesProvider):
     def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:

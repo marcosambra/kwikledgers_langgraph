@@ -51,12 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend",
         default=None,
-        help="Backend de integracao do runtime. O padrao atual e 'legacy'.",
+        help="Backend de integracao do runtime. O padrao e 'fastmcp'; use 'legacy' apenas para rollback temporario.",
     )
     parser.add_argument(
         "--disable-notifications",
         action="store_true",
-        help="Nao envia notificacao pelo adapter legado de Windows.",
+        help="Nao envia notificacao pelo adapter Windows configurado.",
     )
     parser.add_argument(
         "--print-state",

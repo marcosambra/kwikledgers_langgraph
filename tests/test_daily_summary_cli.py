@@ -22,12 +22,12 @@ class FakeRuntime:
 
 class DailySummaryCliTestCase(unittest.TestCase):
     def test_build_initial_state_records_backend_name_in_observability(self) -> None:
-        state = _build_initial_state("test-daily-summary-cli", True, "legacy")
+        state = _build_initial_state("test-daily-summary-cli", True, "fastmcp")
 
-        self.assertEqual(state["observability"]["backend_name"], "legacy")
-        self.assertEqual(state["observability"]["timeline"][0]["payload"]["backend_name"], "legacy")
+        self.assertEqual(state["observability"]["backend_name"], "fastmcp")
+        self.assertEqual(state["observability"]["timeline"][0]["payload"]["backend_name"], "fastmcp")
 
-    def test_run_daily_summary_defaults_to_legacy_backend(self) -> None:
+    def test_run_daily_summary_defaults_to_fastmcp_backend(self) -> None:
         runtime = FakeRuntime(result={"summary": {"counts": {"assigned_items": 1, "blocked_items": 0}}})
 
         with patch("kwikledgers_langgraph.cli.build_daily_summary_runtime", return_value=runtime):
@@ -35,16 +35,22 @@ class DailySummaryCliTestCase(unittest.TestCase):
                 result = run_daily_summary(source="test-source", notifications_enabled=False)
 
         self.assertEqual(result["summary"]["counts"]["assigned_items"], 1)
-        build_ports.assert_called_once_with(backend_name="legacy", notifications_enabled=False)
-        self.assertEqual(runtime.invocations[0]["observability"]["backend_name"], "legacy")
+        build_ports.assert_called_once_with(backend_name="fastmcp", notifications_enabled=False)
+        self.assertEqual(runtime.invocations[0]["observability"]["backend_name"], "fastmcp")
 
-    def test_run_daily_summary_rejects_fastmcp_backend_while_paused(self) -> None:
-        with self.assertRaises(BackendSelectionError):
-            run_daily_summary(
-                source="test-source",
-                notifications_enabled=True,
-                backend_name="fastmcp",
-            )
+    def test_run_daily_summary_selects_fastmcp_backend(self) -> None:
+        runtime = FakeRuntime(result={"summary": {"counts": {"assigned_items": 1, "blocked_items": 0}}})
+
+        with patch("kwikledgers_langgraph.cli.build_daily_summary_runtime", return_value=runtime):
+            with patch("kwikledgers_langgraph.cli.build_daily_summary_ports") as build_ports:
+                run_daily_summary(
+                    source="test-source",
+                    notifications_enabled=True,
+                    backend_name="fastmcp",
+                )
+
+        build_ports.assert_called_once_with(backend_name="fastmcp", notifications_enabled=True)
+        self.assertEqual(runtime.invocations[0]["observability"]["backend_name"], "fastmcp")
 
     def test_run_daily_summary_rejects_invalid_runtime_result(self) -> None:
         runtime = FakeRuntime(result="invalid")

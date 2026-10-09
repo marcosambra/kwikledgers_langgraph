@@ -116,7 +116,7 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
         self.assertEqual(state["pull_request_request"]["story_id"], 120204)
         self.assertNotIn("pending_approval", state)
         self.assertEqual(state["observability"]["flow_name"], "story_pull_request")
-        self.assertEqual(state["observability"]["backend_name"], "legacy")
+        self.assertEqual(state["observability"]["backend_name"], "fastmcp")
         self.assertEqual(state["observability"]["timeline"][0]["status"], "initialized")
 
     def test_build_initial_state_does_not_allow_cli_approval_simulation(self) -> None:
@@ -285,11 +285,12 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
                 "kwikledgers_langgraph.story_pr_cli.build_story_pull_request_ports",
                 return_value=StoryPullRequestPorts(pull_requests=adapter),
             ):
-                preview_result = run_story_pull_request(_build_arguments())
+                preview_result = run_story_pull_request(_build_arguments(backend="legacy"))
                 _write_state_file(preview_result, state_file)
 
                 resume_result = run_story_pull_request(
                     _build_arguments(
+                        backend="legacy",
                         resume_state_file=state_file,
                         approval_request_id=preview_result["pending_approval"]["request_id"],
                     )

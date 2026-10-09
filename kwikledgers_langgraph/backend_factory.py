@@ -40,7 +40,7 @@ class BackendSelectionError(RuntimeError):
 
 
 def resolve_backend_name(explicit_backend: str | None = None) -> str:
-    candidate = explicit_backend or os.environ.get(BACKEND_ENV_VAR, LEGACY_BACKEND)
+    candidate = explicit_backend or os.environ.get(BACKEND_ENV_VAR, FASTMCP_BACKEND)
     backend_name = str(candidate).strip().lower()
     if backend_name not in SUPPORTED_BACKENDS:
         raise BackendSelectionError(

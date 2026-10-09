@@ -5,7 +5,7 @@ import json
 from typing import Any, cast
 
 from kwikledgers_langgraph.backend_factory import build_story_pull_request_ports, resolve_backend_name
-from kwikledgers_langgraph.guardrails import build_approval_confirmation
+from kwikledgers_langgraph.guardrails import load_resume_confirmation
 from kwikledgers_langgraph.observability import (
     append_runtime_observability_artifacts,
     build_observability_context,
@@ -98,7 +98,7 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
         raise StoryPullRequestCliError("O estado salvo nao contem 'pending_approval.request_id' para vincular a aprovacao.")
     if dict(pending_approval.get("preview", {})) != preview:
         raise StoryPullRequestCliError("O estado salvo esta inconsistente: o preview pendente nao corresponde ao preview exibido.")
-    if arguments.approval_request_id != expected_request_id:
+    if getattr(arguments, "approval_request_id", None) is not None and arguments.approval_request_id != expected_request_id:
         raise StoryPullRequestCliError("O 'approval_request_id' informado nao corresponde ao request_id pendente do estado salvo.")
     if not observability.get("active_run_id"):
         raise StoryPullRequestCliError("O estado salvo nao contem 'observability.active_run_id' para retomar a aprovacao real.")
@@ -111,19 +111,29 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
     resumed_state: AgentState = dict(state)
     resumed_state.pop("approval_simulation_requested", None)
-    resumed_state["approval_confirmation"] = build_approval_confirmation(
-        request_id=expected_request_id,
-        approved=True,
-        approval_source=arguments.approval_source,
-    )
+    try:
+        resumed_state["approval_confirmation"] = load_resume_confirmation(
+            state, backend_name=requested_backend,
+            receipt_file=getattr(arguments, "receipt", None),
+            resume_state_file=arguments.resume_state_file,
+            approval_request_id=getattr(arguments, "approval_request_id", None),
+            approval_source=arguments.approval_source,
+        )
+    except ValueError as error:
+        raise StoryPullRequestCliError(str(error)) from error
     return resumed_state
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
     if arguments.resume_state_file:
-        if not arguments.approval_request_id:
-            raise StoryPullRequestCliError("Informe '--approval-request-id' ao usar '--resume-state-file'.")
+        if resolve_backend_name(getattr(arguments, "backend", None)) == "legacy":
+            if not getattr(arguments, "approval_request_id", None):
+                raise StoryPullRequestCliError("Informe '--approval-request-id' para a retomada legada.")
+        elif not getattr(arguments, "receipt", None):
+            raise StoryPullRequestCliError("Informe '--receipt' ao usar '--resume-state-file' com FastMCP.")
         return
+    if getattr(arguments, "receipt", None):
+        raise StoryPullRequestCliError("Use '--receipt' somente com '--resume-state-file'.")
 
     missing_arguments = [
         option_name
@@ -149,10 +159,11 @@ def _write_state_file(state: dict[str, Any], state_file_path: str) -> None:
 
 def run_story_pull_request(arguments: argparse.Namespace) -> dict[str, Any]:
     backend_name = resolve_backend_name(getattr(arguments, "backend", None))
+    state = _build_runtime_state(arguments)
     runtime = build_story_pull_request_runtime(
         build_story_pull_request_ports(backend_name=backend_name)
     )
-    result = runtime.invoke(_build_runtime_state(arguments))
+    result = runtime.invoke(state)
     if not isinstance(result, dict):
         raise RuntimeError("O runtime de PR da story retornou um estado final invalido.")
     return result
@@ -167,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Executa o fluxo LangGraph de preview/criacao de PR da story. "
             "Use o modo inicial para gerar o preview e salvar o estado; use "
-            "'--resume-state-file' com '--approval-request-id' para retomar a criacao real."
+            "'--resume-state-file' com '--receipt' para retomar a criação real."
         ),
     )
     parser.add_argument("--story-id", type=int, help="ID da story pai.")
@@ -182,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend",
         default=None,
-        help="Backend de integracao do runtime. O padrao atual e 'legacy'.",
+        help="Backend de integração do runtime. O padrão é 'fastmcp'.",
     )
     parser.add_argument("--title", default=None, help="Título explícito da PR, se necessário.")
     parser.add_argument(
@@ -217,9 +228,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Arquivo JSON do estado final salvo apos o preview para retomar a aprovacao real.",
     )
     parser.add_argument(
+        "--receipt",
+        default=None,
+        help="Arquivo JSON separado com recibo de aprovação humana assinado.",
+    )
+    parser.add_argument(
         "--approval-request-id",
         default=None,
-        help="Request ID explicitamente aprovado por um humano para o estado retomado.",
+        help="Confirmação por request ID somente no backend 'legacy' explícito.",
     )
     parser.add_argument(
         "--approval-source",

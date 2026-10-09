@@ -2,71 +2,74 @@
 
 Backlog operacional do `kwikledgers_langgraph/`.
 
-## Como usar este backlog
+## Estado Atual
 
-- Mantenha os slices pequenos, validados e focados.
-- Ao concluir um item, atualize testes e documentação quando o comportamento mudar.
-- Enquanto este repositório ainda estiver dentro do monorepo, registre a mudança em `../docs/history/kwikledgers-alteration-YYYY-MM-DD.md`.
+- `fastmcp` é o backend padrão; `legacy` é rollback explícito temporário.
+- As 30 capacidades originais são nativas no FastMCP. O catálogo LangGraph
+  separa 12 leituras, duas prévias, nove ações atômicas aprovadas e sete rotas de lifecycle.
+- Imports neutros foram adicionados pelo fluxo principal.
+- A criação governada de `UserStory`, `Task` e `Bug`, com 15 campos nativos
+  e restrições fornecidas pelo host, está em integração.
+- A desativação do legado não foi concluída.
 
-## Em andamento
+## Evidências Anteriores
 
-- Nenhum slice aberto no momento.
+As contagens abaixo foram informadas pelo fluxo principal e não foram
+reexecutadas nesta edição documental. O registro antigo de 57 testes não
+descreve a suíte atual.
 
-## Estado atual verificado
+| Verificação | Última evidência informada |
+|---|---|
+| FastMCP | 119 testes aprovados anteriormente. |
+| LangGraph completo | 348 testes, com três falhas de expectativa de outcome; execução final após ajustes pendente. |
+| Lifecycle | 81 testes locais aprovados após ajustes. |
+| Atômico | 55 testes locais aprovados após ajustes. |
+| Locks | `poetry check --lock` aprovado em ambos os projetos após regeneração do lock LangGraph. |
 
-- `daily_summary`, `story_pull_request`, `story_branch_association` e `story_status_transition` existem como fluxos compiláveis no runtime.
-- A suíte atual está verde com `57` testes unitários.
-- Os fluxos mutáveis agora compartilham um seam interno preview-first com tratamento uniforme de preview, gate e execute.
-- Já existe um caminho de depuração visual local via LangGraph Studio (`langgraph dev`), configurado em `langgraph.json` com ports mockados em `dev_studio.py`, documentado no `README.md`.
+## Implementado Localmente
 
-## Concluído
+- [x] Fluxos compiláveis de resumo, PR, branch e status, com contratos compartilhados preview-first.
+- [x] Resolução nativa de identidade; leitura stdio anterior de Marcos Pereira bem-sucedida.
+- [x] Lifecycle e catálogo atômico com gates, sem bypass genérico das sete rotas de processo.
+- [x] Estados, journals e checkpoints assinados.
+- [x] Recibos com TTL máximo de 600 segundos e nonce vinculado à prévia exata pelo fluxo principal.
+- [x] Tokens HMAC de execução de cinco minutos e ledger estável.
+- [x] Bootstrap e workflows de especialistas preparados, sem instalações nem pipelines executados.
+- [x] Studio local com portas mockadas e resumo mínimo de observabilidade para tracking.
 
-- [x] Criar um seam real de resolução de identidade do usuário para o runtime novo.
-- [x] Fazer o CI instalar as dependências reais do projeto e validar a superfície que depende de `langgraph`.
-- [x] Endurecer o contrato de aprovação para mutações reais, separando o pedido emitido pelo runtime da confirmação humana e reduzindo a dependência em `pending_approval` vindo pronto no estado inicial.
-- [x] Cobrir a superfície CLI do fluxo mutável de PR da story com testes focados.
-- [x] Cobrir o grafo `story_pull_request` com testes comportamentais: payload inválido, preview sem aprovação, parada limpa e caminho com aprovação.
+## Gates Técnicos e de Validação
 
-## Próximos slices prioritários
+- [ ] Executar e registrar a suíte completa final do LangGraph; não declarar verde apenas pelos testes focados.
+- [ ] Concluir integração da criação governada e validar restrições reais do host/processo.
+- [ ] Verificar aquisição externa de recibo assinado real pelo host, vínculo à prévia, expiração e rejeição de replay.
+- [ ] Executar smoke Azure autenticado de leitura; identidade local não comprova autenticação Azure.
+- [ ] Executar calendário Windows real no host suportado.
+- [ ] Executar instalações de especialistas preparadas e registrar resultados.
+- [ ] Executar pipelines preparados e registrar resultados.
 
-### P1
+Não houve escrita Azure real nem commit neste recorte. Qualquer mutação
+externa exige prévia e aprovação específica, mesmo durante validação.
 
-- [x] Adicionar o fluxo preview-first de associação de branch da story.
-	Critério mínimo: criar contrato em `state.py`, porta em `adapters.py`, adapter legado, grafo `validate -> preview -> gate -> execute/stop`, builder em `runtime.py`, CLI dedicada e testes do caminho sem aprovação, com aprovação e parada limpa.
-- [x] Adicionar o fluxo preview-first de transição de status da story.
-	Critério mínimo: repetir a mesma superfície do fluxo de PR, com `request_id` vinculado ao preview e retomada explícita via estado salvo.
-- [x] Extrair um seam compartilhado para fluxos mutáveis preview-first.
-	Objetivo: reduzir duplicação entre PR, associação de branch e transição de status sem enfraquecer guardrails, observabilidade e approval gate.
+## Gates Operacionais de Retirada
 
-### P2
+- [ ] Definir janela limitada de observação, responsáveis e rollback.
+- [ ] Identificar consumidores ainda legados, incluindo agente raiz e ferramentas, scheduler e configurações de projetos.
+- [ ] Obter aprovação explícita do usuário antes de alterar qualquer superfície protegida.
+- [ ] Desativar apenas consumidores autorizados e registrar a validação pós-retirada.
 
-- [x] Integrar observabilidade do runtime com um destino externo do stack da KwikLedgers, como `kl_observatory`, OpenTelemetry ou LangSmith.
-- [x] Normalizar melhor a política de payload mínimo em preview, tracking e timeline.
-	Foco: persistir só os campos operacionais necessários para retomada, auditoria e troubleshooting.
-- [x] Expandir testes dos adapters legados com cenários de erro e payload inválido.
-	Cobrir pelo menos: JSON inválido, payload raiz não-dict, falha ao localizar `agent/mcp_servers` e erro propagado do legado.
-- [x] Cobrir o caminho de erro dos grafos mutáveis quando o adapter de preview ou execute falha.
-	Hoje a suíte cobre principalmente payload inválido e approval gate, mas ainda não trata falhas reais do adapter.
+A troca de backend não equivale ao desligamento desses consumidores.
+Pendências operacionais são separadas das implementações técnicas locais.
 
-### P3
+## Critérios de Conclusão
 
-- [x] Expor os novos fluxos mutáveis também em documentação operacional no `README.md` com exemplos de ida e retomada por arquivo de estado.
-- [x] Revisar se `story` no estado tipado deve voltar a ser usado ou removido do contrato enquanto não participa dos fluxos atuais.
-- [x] Decidir se o runtime principal deve ganhar um registry explícito de fluxos mutáveis além dos builders soltos atuais.
+Cada gate exige comando ou ação, resultado, revisão e data registrados.
+Testes focados não substituem a suíte final; mocks não substituem smokes
+externos; workflows preparados não equivalem a execução de CI.
 
-## Critérios de pronto por slice
+Nesta atualização, complemente somente o [histórico existente de 2026-09-30](../docs/history/kwikledgers-alteration-2026-09-30.md).
+A decisão da data operacional atual pertence ao fluxo principal, sem criar
+outro arquivo de histórico nesta edição.
 
-- O comportamento novo ou ajustado está coberto por teste focado.
-- O caminho de validação mais barato foi executado ou, se indisponível, documentado.
-- O `README.md` foi atualizado quando a superfície pública do repositório mudou.
-- O histórico em `../docs/history/` foi atualizado.
-
-## Lacunas concretas observadas hoje
-
-- Ainda não existe emissao estruturada de spans/eventos fora do resumo minimo enviado para `AI_Tracking/Metrics/ai-usage-log.md`.
-- O preview de status ainda sintetiza a revisao da story a partir do detalhe legado disponivel, sem um campo de revisao nativo vindo do MCP legado.
-
-## Ordem sugerida de execução
-
-1. Evoluir o destino externo de observabilidade alem do resumo minimo em `AI_Tracking`.
-2. Endurecer o preview de status quando o MCP legado expuser revisao nativa da story.
+Consulte [README.md](README.md) e o [guia de validação e desativação](../docs/validation/fastmcp-langgraph-legacy-sunset.md)
+para comandos, diagrama e checklist. Não há percentual estimado nem
+declaração de conclusão operacional.

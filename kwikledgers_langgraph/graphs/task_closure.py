@@ -106,6 +106,8 @@ def build_task_closure_graph(ports: TaskClosurePorts) -> Any:
                 **request,
                 "preview": dict(state.get("task_closure_preview", {})),
             },
+            fastmcp_capability_name="update_work_item_effort",
+            approval_action="task_closure.execute",
             tracking_payload_builder=lambda request, result: {
                 "task_id": request.get("task_id"),
                 "completed_work_hours": result.get("completed_work_hours"),

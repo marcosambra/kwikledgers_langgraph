@@ -11,8 +11,16 @@ dependencies = [
     "langchain-core>=1.0,<2.0",
     "langgraph>=0.4.10,<2.0",
     "langgraph-cli[inmem]>=0.4,<0.5",
+    "mcp>=1.10,<2.0",
     "pydantic>=2.8,<3.0",
     "typing-extensions>=4.12,<5.0"
+]
+
+[project.optional-dependencies]
+legacy = [
+    "azure-devops>=7.1.0b4,<8.0.0",
+    "msrest>=0.7.1,<0.8.0",
+    "python-dotenv>=1.2.2,<2.0.0"
 ]
 
 [project.scripts]
@@ -21,6 +29,7 @@ kwikledgers-langgraph-story-pr = "kwikledgers_langgraph.story_pr_cli:main"
 kwikledgers-langgraph-story-branch = "kwikledgers_langgraph.story_branch_cli:main"
 kwikledgers-langgraph-story-status = "kwikledgers_langgraph.story_status_cli:main"
 kwikledgers-langgraph-task-closure = "kwikledgers_langgraph.task_closure_cli:main"
+kwikledgers-langgraph-day-end-closure = "kwikledgers_langgraph.day_end_closure_cli:main"
 kwikledgers-langgraph-sprint-stories = "kwikledgers_langgraph.sprint_stories_cli:main"
 
 [tool.poetry]
@@ -28,6 +37,7 @@ packages = [{ include = "kwikledgers_langgraph" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<4.0"
+kwikledgers-fastmcp = { path = "../kwikledgers_fastmcp", develop = true }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

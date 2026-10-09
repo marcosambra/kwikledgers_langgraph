@@ -79,6 +79,10 @@ def build_story_branch_association_graph(ports: StoryBranchAssociationPorts) -> 
             tracking_category="branch_association",
             tracking_message="Associacao de branch da story executada pelo runtime LangGraph.",
             execute_operation=ports.branches.associate_story_branch,
+            request_builder=lambda request, state: {
+                **request,
+                "preview": dict(state.get("branch_association_preview", {})),
+            },
             fastmcp_capability_name="associate_story_branch",
             approval_action="story_branch_association.execute",
             tracking_payload_builder=lambda request, _result: {

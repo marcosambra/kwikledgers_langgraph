@@ -5,6 +5,8 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from kwikledgers_langgraph.adapters import DailySummaryPorts
+from kwikledgers_langgraph.fastmcp_adapters import technical_arguments_for_capability
+from kwikledgers_langgraph.fastmcp_execution_capability import issue_runtime_execution_capability
 from kwikledgers_langgraph.guardrails import OperationKind, allow_without_approval
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error, append_tracking_event
@@ -120,7 +122,22 @@ def build_daily_summary_graph(ports: DailySummaryPorts) -> Any:
         )
         summary = state.get("summary") or {}
         source = state.get("source", "langgraph-runtime")
-        result = ports.tracking.sync_daily_tracking(summary, source)
+        if _is_fastmcp_backend(state):
+            arguments = technical_arguments_for_capability(
+                "sync_daily_tracking", {"summary": summary, "source": source},
+            )
+            result = ports.tracking.sync_daily_tracking(
+                summary,
+                source,
+                execution_capability=issue_runtime_execution_capability(
+                    state,
+                    action="daily_summary.sync_tracking",
+                    capability_name="sync_daily_tracking",
+                    arguments=arguments,
+                ),
+            )
+        else:
+            result = ports.tracking.sync_daily_tracking(summary, source)
         event = append_tracking_event(
             state,
             category="tracking",
@@ -156,7 +173,22 @@ def build_daily_summary_graph(ports: DailySummaryPorts) -> Any:
             message="Enviando notificação do resumo diário.",
         )
         summary = state.get("summary") or {}
-        result = ports.notifications.send_daily_summary_notification(summary)
+        try:
+            if _is_fastmcp_backend(state):
+                arguments = technical_arguments_for_capability("send_notification", {"summary": summary})
+                result = ports.notifications.send_daily_summary_notification(
+                    summary,
+                    execution_capability=issue_runtime_execution_capability(
+                        state,
+                        action="daily_summary.notify_user",
+                        capability_name="send_notification",
+                        arguments=arguments,
+                    ),
+                )
+            else:
+                result = ports.notifications.send_daily_summary_notification(summary)
+        except Exception as error:
+            result = {"status": "failed", "message": str(error)}
         event = append_tracking_event(
             state,
             category="notification",
@@ -195,3 +227,7 @@ def build_daily_summary_graph(ports: DailySummaryPorts) -> Any:
     graph.add_edge("notify_user", END)
 
     return graph.compile()
+
+
+def _is_fastmcp_backend(state: AgentState) -> bool:
+    return str(dict(state.get("observability", {})).get("backend_name") or "").strip().lower() == "fastmcp"

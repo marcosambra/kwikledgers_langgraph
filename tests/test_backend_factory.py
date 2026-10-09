@@ -26,9 +26,9 @@ from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter, NoO
 
 
 class BackendFactoryTestCase(unittest.TestCase):
-    def test_resolve_backend_name_defaults_to_legacy(self) -> None:
+    def test_resolve_backend_name_defaults_to_fastmcp(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(resolve_backend_name(), LEGACY_BACKEND)
+            self.assertEqual(resolve_backend_name(), FASTMCP_BACKEND)
 
     def test_resolve_backend_name_reads_environment_override(self) -> None:
         with patch.dict(os.environ, {BACKEND_ENV_VAR: LEGACY_BACKEND}, clear=False):

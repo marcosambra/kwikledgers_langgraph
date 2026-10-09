@@ -108,6 +108,7 @@ class GuardrailsTestCase(unittest.TestCase):
             "observability": build_observability_context(
                 flow_name="story_pull_request",
                 source="test",
+                backend_name="legacy",
             ),
             "approval_resume_ready": True,
         }

@@ -89,6 +89,10 @@ def build_story_pull_request_graph(ports: StoryPullRequestPorts) -> Any:
             tracking_category="pull_request",
             tracking_message="PR da story criada pelo runtime LangGraph.",
             execute_operation=ports.pull_requests.create_story_pull_request,
+            request_builder=lambda request, state: {
+                **request,
+                "preview": dict(state.get("pull_request_preview", {})),
+            },
             fastmcp_capability_name="create_story_pull_request",
             approval_action="story_pull_request.create",
             tracking_payload_builder=lambda request, result: {

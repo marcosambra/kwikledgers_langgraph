@@ -4,6 +4,7 @@ from typing import Any
 
 from kwikledgers_langgraph.adapters import (
     DailySummaryPorts,
+    DayEndClosurePorts,
     SprintStoriesPorts,
     StoryBranchAssociationPorts,
     StoryPullRequestPorts,
@@ -87,6 +88,12 @@ def build_task_closure_runtime(ports: TaskClosurePorts) -> Any:
         raise
 
     return build_task_closure_graph(ports)
+
+
+def build_day_end_closure_runtime(ports: DayEndClosurePorts) -> Any:
+    from kwikledgers_langgraph.graphs.day_end_closure import build_day_end_closure_graph
+
+    return build_day_end_closure_graph(ports)
 
 
 def build_sprint_stories_runtime(ports: SprintStoriesPorts) -> Any:

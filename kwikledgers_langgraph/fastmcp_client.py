@@ -9,12 +9,18 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+
+
+def _default_stdio_command() -> str:
+    local_fastmcp_python = Path(__file__).resolve().parents[2] / "kwikledgers_fastmcp" / ".venv" / "bin" / "python"
+    return str(local_fastmcp_python) if local_fastmcp_python.is_file() else sys.executable
 
 
 class FastMCPClientError(RuntimeError):
@@ -29,7 +35,7 @@ class CapabilityClient(Protocol):
 @dataclass(frozen=True)
 class FastMCPClientConfig:
     transport: str = "stdio"
-    command: str = sys.executable
+    command: str = _default_stdio_command()
     args: tuple[str, ...] = ("-m", "kwikledgers_fastmcp.server")
     url: str | None = None
     timeout_seconds: float = 30.0
@@ -57,7 +63,7 @@ class FastMCPClientConfig:
         url = os.environ.get("KWIKLEDGERS_FASTMCP_URL")
         return cls(
             transport=os.environ.get("KWIKLEDGERS_FASTMCP_TRANSPORT", "http" if url else "stdio"),
-            command=os.environ.get("KWIKLEDGERS_FASTMCP_COMMAND", sys.executable),
+            command=os.environ.get("KWIKLEDGERS_FASTMCP_COMMAND", _default_stdio_command()),
             args=tuple(args),
             url=url,
             timeout_seconds=float(os.environ.get("KWIKLEDGERS_FASTMCP_TIMEOUT_SECONDS", "30")),

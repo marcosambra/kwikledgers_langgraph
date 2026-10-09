@@ -43,6 +43,7 @@ def _base_state() -> dict[str, Any]:
         "observability": build_observability_context(
             flow_name="task_closure",
             source="test",
+            backend_name="legacy",
         ),
         "task_closure_request": {
             "task_id": 120310,

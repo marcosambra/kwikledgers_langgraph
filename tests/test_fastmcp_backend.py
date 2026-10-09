@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import os
 import select
 import socket
 import subprocess
@@ -10,6 +11,7 @@ import sys
 import time
 import unittest
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -27,6 +29,81 @@ def response(data: object = None, *, error: bool = False, text: str = "") -> Sim
 
 
 class FastMCPClientTestCase(unittest.TestCase):
+    def test_windows_deadlines_are_shared_by_wait_session_and_http(self) -> None:
+        original_wait_for = asyncio.wait_for
+        for transport in ("stdio", "http"):
+            for name, expected in (("create_calendar_event", 105), ("schedule_reminder", 105),
+                                   ("get_upcoming_deadlines", 105), ("send_notification", 45), ("read", 30)):
+                session = AsyncMock()
+                session.__aenter__.return_value = session
+                session.call_tool.return_value = response({"ok": True})
+
+                @asynccontextmanager
+                async def stdio(_parameters):
+                    yield "read", "write"
+
+                @asynccontextmanager
+                async def http(_url, **kwargs):
+                    self.assertEqual(kwargs["timeout"], timedelta(seconds=expected))
+                    self.assertEqual(kwargs["sse_read_timeout"], timedelta(seconds=expected))
+                    yield "read", "write", None
+
+                config = FastMCPClientConfig(transport=transport, url="http://localhost/mcp" if transport == "http" else None)
+                with self.subTest(transport=transport, name=name), patch.dict(os.environ, {}, clear=True), \
+                     patch("kwikledgers_langgraph.fastmcp_client.stdio_client", stdio), \
+                     patch("kwikledgers_langgraph.fastmcp_client.streamablehttp_client", http), \
+                     patch("kwikledgers_langgraph.fastmcp_client.ClientSession", return_value=session) as constructor, \
+                     patch("kwikledgers_langgraph.fastmcp_client.asyncio.wait_for", wraps=original_wait_for) as wait:
+                    self.assertEqual(FastMCPClient(config).call(name, {}), {"ok": True})
+                    self.assertEqual(wait.call_args.args[1], expected)
+                    self.assertEqual(constructor.call_args.kwargs["read_timeout_seconds"], timedelta(seconds=expected))
+                    session.initialize.assert_awaited_once()
+                    session.call_tool.assert_awaited_once_with(name, arguments={"arguments": {}})
+
+    def test_windows_deadlines_use_bounded_server_environment_and_config_floor(self) -> None:
+        for raw, outlook, notification in (("120", 135, 245), (" 3 ", 18, 11), ("1", 16, 7),
+                                           ("301", 315, 605), ("999999", 315, 605),
+                                           ("", 105, 45), ("secret", 105, 45), ("0", 105, 45),
+                                           ("-1", 105, 45), ("nan", 105, 45), ("inf", 105, 45), ("1.5", 105, 45),
+                                           ("9" * 5000, 105, 45)):
+            environment = {"KWIKLEDGERS_WINDOWS_OUTLOOK_TIMEOUT_SECONDS": raw,
+                           "KWIKLEDGERS_WINDOWS_NOTIFICATION_TIMEOUT_SECONDS": raw}
+            for transport in ("stdio", "http"):
+                with self.subTest(raw=raw, transport=transport), patch.dict(os.environ, environment, clear=True):
+                    client = FastMCPClient(FastMCPClientConfig(
+                        transport=transport, url="http://localhost/mcp" if transport == "http" else None,
+                        timeout_seconds=0.01,
+                    ))
+                    for name in ("create_calendar_event", "schedule_reminder", "get_upcoming_deadlines"):
+                        self.assertEqual(client._timeout_for_capability(name), outlook)
+                    self.assertEqual(client._timeout_for_capability("send_notification"), notification)
+                    self.assertEqual(client._timeout_for_capability("execute"), 0.01)
+        with patch.dict(os.environ, {}, clear=True):
+            for configured, outlook, notification in ((1, 105, 45), (60, 105, 60), (240, 240, 240)):
+                client = FastMCPClient(FastMCPClientConfig(timeout_seconds=configured))
+                self.assertEqual(client._timeout_for_capability("create_calendar_event"), outlook)
+                self.assertEqual(client._timeout_for_capability("send_notification"), notification)
+                self.assertEqual(client._timeout_for_capability("read"), configured)
+
+    def test_windows_deadlines_use_exact_explicit_stdio_environment(self) -> None:
+        with patch.dict(os.environ, {"KWIKLEDGERS_WINDOWS_OUTLOOK_TIMEOUT_SECONDS": "300",
+                                    "KWIKLEDGERS_WINDOWS_NOTIFICATION_TIMEOUT_SECONDS": "300"}):
+            client = FastMCPClient(FastMCPClientConfig(env={}))
+            self.assertEqual(client._timeout_for_capability("create_calendar_event"), 105)
+            self.assertEqual(client._timeout_for_capability("send_notification"), 45)
+            client = FastMCPClient(FastMCPClientConfig(env={
+                "KWIKLEDGERS_WINDOWS_OUTLOOK_TIMEOUT_SECONDS": "120",
+                "KWIKLEDGERS_WINDOWS_NOTIFICATION_TIMEOUT_SECONDS": "30",
+            }))
+            self.assertEqual(client._timeout_for_capability("schedule_reminder"), 135)
+            self.assertEqual(client._timeout_for_capability("send_notification"), 65)
+
+    def test_environment_client_timeout_is_safe_and_bounded(self) -> None:
+        for raw, expected in (("secret", 30), ("", 30), ("nan", 30), ("inf", 30), ("-inf", 30),
+                              ("0", 30), ("-1", 30), (" 0.5 ", 0.5), ("240", 240), ("999999", 3600)):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_TIMEOUT_SECONDS": raw}, clear=True):
+                self.assertEqual(FastMCPClientConfig.from_environment().timeout_seconds, expected)
+
     def test_normalizes_structured_and_text_envelopes(self) -> None:
         envelope = {"capability": "read", "data": {"count": 2}}
         for result in (response(envelope), response(text=json.dumps(envelope))):
@@ -80,6 +157,7 @@ class FastMCPClientTestCase(unittest.TestCase):
             with patch.object(client, "_request", operation), self.assertRaises(FastMCPClientError) as raised:
                 client.call("execute", {"execution_capability": "secret"})
             self.assertNotIn("secret", str(raised.exception))
+            self.assertTrue(raised.exception.execution_outcome_unknown)
 
     def test_config_rejects_invalid_transport_url_timeout_and_args(self) -> None:
         for options in ({"transport": "bad"}, {"timeout_seconds": 0}, {"timeout_seconds": float("inf")},
@@ -88,6 +166,14 @@ class FastMCPClientTestCase(unittest.TestCase):
                 FastMCPClientConfig(**options)
         with patch.dict("os.environ", {"KWIKLEDGERS_FASTMCP_ARGS": '{}'}), self.assertRaises(ValueError):
             FastMCPClientConfig.from_environment()
+
+    def test_unauthenticated_http_is_limited_to_loopback(self) -> None:
+        for host in ("example.com", "192.168.1.5", "localhost.example.com"):
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                FastMCPClientConfig(transport="http", url=f"https://{host}/mcp")
+        for host in ("localhost", "127.0.0.1", "[::1]"):
+            with self.subTest(host=host):
+                self.assertEqual(FastMCPClientConfig(transport="http", url=f"http://{host}/mcp").transport, "http")
 
     def test_timeout_closes_transport_and_session_contexts(self) -> None:
         closed = []
@@ -269,6 +355,31 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
             self.assertEqual(client.calls, [("update_work_item_effort", arguments)])
             self.assertEqual(result["status"], "closed")
 
+    def test_closure_preview_requires_fresh_native_revision(self) -> None:
+        client = RecordingClient({"id": 9, "revision": 4})
+        adapter = FastMCPTaskClosureAdapter(client)
+        request = {"task_id": 9, "expected_revision": 999}
+        self.assertEqual(adapter.preview_task_closure(request), {"task_id": 9, "task_revision": 4})
+        client.data = {"id": 9, "revision": 5}
+        self.assertEqual(adapter.preview_task_closure(request)["task_revision"], 5)
+        self.assertEqual(client.calls, [("get_story_details", {"story_id": 9})] * 2)
+        for data in ({"message": "revision: 4"}, {"id": 9, "revision": True},
+                     {"id": 9, "revision": "4"}, {"id": 9, "revision": 0}, {"id": 8, "revision": 4}):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                FastMCPTaskClosureAdapter(RecordingClient(data)).preview_task_closure(request)
+
+    def test_association_revisions_are_taken_from_approved_preview(self) -> None:
+        for capability in ("associate_story_branch", "create_story_pull_request"):
+            request = {"story_id": 42, "repository_name": "repo", "source_branch": "feature/test",
+                       "preview": {"expected_revisions": {"42": 7, "43": 3}}}
+            arguments = technical_arguments_for_capability(capability, request)
+            self.assertEqual(arguments["expected_revisions"], {"42": 7, "43": 3})
+            self.assertNotIn("preview", arguments)
+            for update in ({"expected_revisions": {"42": 8}}, {"expected_revision": 8},
+                           {"preview": {}}, {"preview": {"expected_revisions": {"42": True}}}):
+                with self.subTest(capability=capability, update=update), self.assertRaises(ValueError):
+                    technical_arguments_for_capability(capability, {**request, **update})
+
     def test_invalid_closure_never_calls_server(self) -> None:
         client = RecordingClient()
         preview = {"closure_allowed": True, "completed_work_hours": 3, "task_revision": 4}
@@ -292,6 +403,8 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
             self.assertEqual(arguments, {**issued_arguments, "execution_capability": "internal-token"})
         self.assertEqual(json.loads(client.calls[0][1]["summary"]), summary)
         self.assertEqual(client.calls[1][1]["urgency"], "high")
+        self.assertIsInstance(client.calls[1][1]["message"], str)
+        self.assertEqual(client.calls[1][1]["message"].count("Story points restantes"), 1)
 
     def test_internal_effects_fail_without_token_and_accept_explicit_token(self) -> None:
         client = RecordingClient()

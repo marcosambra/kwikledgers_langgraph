@@ -103,7 +103,7 @@ class StoryBranchCliTestCase(unittest.TestCase):
         self.assertEqual(state["branch_association_request"]["story_id"], 120204)
         self.assertNotIn("pending_approval", state)
         self.assertEqual(state["observability"]["flow_name"], "story_branch_association")
-        self.assertEqual(state["observability"]["backend_name"], "legacy")
+        self.assertEqual(state["observability"]["backend_name"], "fastmcp")
         self.assertEqual(state["observability"]["timeline"][0]["status"], "initialized")
 
     def test_build_initial_state_does_not_allow_cli_approval_simulation(self) -> None:
@@ -238,11 +238,12 @@ class StoryBranchCliTestCase(unittest.TestCase):
                 "kwikledgers_langgraph.story_branch_cli.build_story_branch_association_ports",
                 return_value=StoryBranchAssociationPorts(branches=adapter),
             ):
-                preview_result = run_story_branch_association(_build_arguments())
+                preview_result = run_story_branch_association(_build_arguments(backend="legacy"))
                 _write_state_file(preview_result, state_file)
 
                 resume_result = run_story_branch_association(
                     _build_arguments(
+                        backend="legacy",
                         resume_state_file=state_file,
                         approval_request_id=preview_result["pending_approval"]["request_id"],
                     )

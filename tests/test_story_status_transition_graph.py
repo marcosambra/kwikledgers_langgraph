@@ -75,6 +75,7 @@ def _base_state() -> dict[str, Any]:
         "observability": build_observability_context(
             flow_name="story_status_transition",
             source="test",
+            backend_name="legacy",
         ),
         "story_status_request": {
             "story_id": 120204,
