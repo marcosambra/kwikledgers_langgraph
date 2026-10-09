@@ -17,10 +17,12 @@ from typing import Any, Callable, Iterator, Mapping
 
 from kwikledgers_langgraph.adapters import LifecyclePorts, TechnicalDebtPreparationPorts
 from kwikledgers_langgraph.fastmcp_client import CapabilityClient, FastMCPClient
+from kwikledgers_langgraph.fastmcp_execution_capability import INTERNAL_RUNTIME_CAPABILITIES
 
 
 CapabilityIssuer = Callable[..., str]
 _ACTIVE: ContextVar[dict[str, Any] | None] = ContextVar("lifecycle_execution", default=None)
+_APPROVALS: ContextVar[Any] = ContextVar("lifecycle_approvals", default=None)
 
 
 def canonical(value: Any) -> str:
@@ -54,9 +56,11 @@ def lifecycle_scope(state: dict[str, Any], approvals: Any = None) -> Iterator[No
     else:
         trusted.pop("verified_lifecycle_binding", None)
     token = _ACTIVE.set(trusted)
+    approval_token = _APPROVALS.set(approvals)
     try:
         yield
     finally:
+        _APPROVALS.reset(approval_token)
         _ACTIVE.reset(token)
 
 
@@ -64,9 +68,74 @@ def active_state(action: str | None = None) -> dict[str, Any]:
     state = _ACTIVE.get()
     if state is None:
         raise ValueError("Operation must run inside lifecycle engine")
-    if action is not None and state.get("verified_lifecycle_binding", {}).get("action") != action:
-        raise ValueError("Operation lacks an independently approved process stage")
+    if action is not None:
+        binding = state.get("verified_lifecycle_binding", {})
+        approvals = _APPROVALS.get()
+        pending = state.get("pending_approval", {})
+        if (binding.get("action") != action or approvals is None
+                or pending.get("approved") is not True
+                or approvals.verify(binding, pending.get("receipt")) is not True):
+            raise ValueError("Operation lacks an independently approved process stage")
     return deepcopy(state)
+
+
+def require_approved_preview(action: str, preview: dict[str, Any]) -> None:
+    state = active_state(action)
+    approved = state["verified_lifecycle_binding"]["preview"]
+    if canonical(approved) != canonical(preview):
+        raise ValueError("Operation differs from the independently approved preview")
+
+
+def validate_lifecycle_execution(state: dict[str, Any], *, action: str,
+                                 capability_name: str, arguments: dict[str, Any]) -> None:
+    binding = state.get("verified_lifecycle_binding", {})
+    if binding.get("action") != action:
+        raise ValueError("Operation differs from approved lifecycle action")
+    preview = binding.get("preview", {})
+    try:
+        if action == "activate":
+            name = "update_work_item_content"
+            expected = {field: preview[field] for field in
+                        ("assigned_to", "area_path", "status", "expected_revision")}
+            expected["work_item_id"] = preview["task_id"]
+        elif action == "awaiting_pr":
+            name = "update_story_status"
+            expected = {"story_id": preview["story_id"], "status": preview["target_status"],
+                        "expected_revision": preview["expected_revision"]}
+        elif action in ("hours", "close"):
+            name = "update_work_item_effort"
+            expected = {"work_item_id": preview["task_id"],
+                        "completed_work_hours": preview["completed_work_hours"],
+                        "expected_revision": preview["expected_revision"]}
+            if action == "close":
+                expected["status"] = "Closed"
+        elif action == "branch_links":
+            name = "associate_story_branch"
+            expected = {"story_id": preview["story_id"], "repository_name": preview["repository"],
+                        "source_branch": preview["name"], "related_work_item_ids": preview["associated_ids"],
+                        "include_child_work_items": True, "expected_revisions": preview["expected_revisions"]}
+        elif action == "draft_pr":
+            name = "create_story_pull_request"
+            if preview["expected_revisions"].get(str(preview["story_id"])) != preview["expected_revision"]:
+                raise ValueError("Approved parent revision conflicts with native revisions")
+            expected = {**preview["native_arguments"], "expected_revision": preview["expected_revision"],
+                        "expected_revisions": preview["expected_revisions"]}
+        elif action == "work_item_creation" or action == "debt_parent" or re.fullmatch(r"debt_child_(0|[1-9][0-9]*)", action):
+            name = "create_work_item"
+            expected = preview
+        elif action.startswith("atomic_"):
+            from kwikledgers_langgraph.atomic_runtime import ATOMIC_ACTION_CAPABILITIES, validate_arguments
+
+            name = ATOMIC_ACTION_CAPABILITIES.get(action)
+            if name is None:
+                raise ValueError("Lifecycle action has no authorized FastMCP capability")
+            expected = validate_arguments(name, preview, technical=True)
+        else:
+            raise ValueError("Lifecycle action has no authorized FastMCP capability")
+        if capability_name != name or canonical(arguments) != canonical(expected):
+            raise ValueError("Operation differs from approved technical arguments")
+    except (KeyError, TypeError) as error:
+        raise ValueError("Approved lifecycle technical arguments missing") from error
 
 
 class SignedReceiptApproval:
@@ -81,7 +150,8 @@ class SignedReceiptApproval:
             if not isinstance(confirmation, dict) or set(confirmation) != {"claims", "signature"}:
                 return False
             claims = confirmation["claims"]
-            if not isinstance(claims, dict) or claims.get("decision") != "approve" or not claims.get("subject"):
+            if (not isinstance(claims, dict) or claims.get("decision") != "approve"
+                    or not isinstance(claims.get("subject"), str) or not claims["subject"].strip()):
                 return False
             expected = hmac.new(self.key, canonical(claims).encode(), "sha256").hexdigest()
             if not hmac.compare_digest(expected, confirmation["signature"]):
@@ -184,17 +254,28 @@ class LifecycleGateway:
 
     def execute(self, action: str, name: str, arguments: dict[str, Any], key: str) -> dict[str, Any]:
         state = active_state(action)
+        arguments = deepcopy(arguments)
+        validate_lifecycle_execution(state, action=action, capability_name=name, arguments=arguments)
         if self.execution_issuer is None:
             raise RuntimeError("MAIN must provide issue_lifecycle_execution_capability")
         def invoke() -> dict[str, Any]:
+            state = active_state(action)
+            validate_lifecycle_execution(state, action=action, capability_name=name, arguments=arguments)
             token = self.execution_issuer(state, action=action, capability_name=name, arguments=deepcopy(arguments))
             if not isinstance(token, str) or not token.strip():
                 raise ValueError("Execution capability missing")
+            active_state(action)
             return self.client.call(name, {**arguments, "execution_capability": token})
         return self.journal.once(key, arguments, invoke)
 
     def internal(self, name: str, arguments: dict[str, Any], key: str) -> dict[str, Any]:
+        if name not in INTERNAL_RUNTIME_CAPABILITIES:
+            raise ValueError("Internal lifecycle capability is not allowed")
         state = active_state()
+        state.pop("verified_lifecycle_binding", None)
+        state.pop("pending_approval", None)
+        state.pop("approval_confirmation", None)
+        arguments = deepcopy(arguments)
         if self.runtime_issuer is None:
             raise RuntimeError("MAIN must provide issue_runtime_execution_capability")
         def invoke() -> dict[str, Any]:
@@ -303,9 +384,11 @@ class GitBranches:
         if self.preview(context, preview["name"].split("/")[0]) != preview or preview["dirty"]:
             raise ValueError("Checkout or remote changed; no automatic stash")
         def execute() -> dict[str, Any]:
+            active_state("branch")
             git(repository, "fetch", "--no-tags", "origin", "+refs/heads/stage-pre-prod:refs/remotes/origin/stage-pre-prod")
             if git(repository, "rev-parse", "refs/remotes/origin/stage-pre-prod") != preview["remote_head"]:
                 raise ValueError("Fetched base differs from approved origin HEAD")
+            active_state("branch")
             if preview["reuse"]:
                 git(repository, "merge-base", "--is-ancestor", preview["remote_head"], preview["name"])
                 git(repository, "switch", preview["name"])
@@ -319,6 +402,9 @@ class GitBranches:
         owned = self._owned(self.path(context["repository"]), context["story_id"])
         if len(owned) != 1:
             raise ValueError("Exactly one parent story branch required")
+        provenance = self.gateway.journal.get(f'branch:{context["repository"]}:{context["story_id"]}')
+        if not provenance or provenance.get("name") != owned[0]:
+            raise ValueError("Existing branch has no authenticated parent provenance")
         result = self.gateway.client.call("preview_story_branch_association", {
             "story_id": context["story_id"], "repository_name": context["repository"],
             "source_branch": owned[0], "related_work_item_ids": context["child_ids"],
@@ -387,29 +473,61 @@ class MCPContext:
             raise ValueError("Structured native revision and status required")
         return data
 
-    def resolve(self, request: dict[str, Any]) -> dict[str, Any]:
+    def _authorized_details(self, request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], list[int]]:
         repository = request["repository_name"]
         self.branches.path(repository)
         story = self._details(request["story_id"])
         task = self._details(request["task_id"])
-        if story.get("repository_name") != repository or story.get("project") != self.project:
+        association = self.gateway.client.call("preview_story_branch_association", {
+            "story_id": request["story_id"], "repository_name": repository,
+            "source_branch": f"feature/KL-{request['story_id']}-context-validation",
+            "include_child_work_items": True,
+        })
+        if (association.get("story_id") != request["story_id"]
+                or association.get("repository_name") != repository or association.get("project") != self.project
+                or story.get("repository_name", repository) != repository
+                or story.get("project", self.project) != self.project):
             raise ValueError("Story repository/project authorization missing")
-        children = story.get("child_ids")
-        if (not isinstance(children, list) or any(type(item) is not int or item <= 0 for item in children)
-                or request["task_id"] not in children or task.get("parent_id") != request["story_id"]):
+        items = association.get("work_items")
+        revisions = association.get("expected_revisions")
+        if not isinstance(items, list) or not isinstance(revisions, dict):
+            raise ValueError("Authoritative relationship and revision evidence required")
+        children = [item["id"] for item in items if item.get("relationship_to_story") == "child"]
+        parents = [item["id"] for item in items if item.get("relationship_to_story") == "parent"]
+        if (parents != [request["story_id"]]
+                or any(type(identifier) is not int or identifier <= 0 for identifier in children)
+                or len(children) != len(set(children)) or request["task_id"] not in children
+                or task.get("parent_id", request["story_id"]) not in (None, request["story_id"])
+                or set(story.get("child_ids", children)) != set(children)):
             raise ValueError("Task must be an authoritative child of this story")
+        for details in (story, task):
+            identifier = details.get("id", details.get("story_id"))
+            revision = revisions.get(str(identifier))
+            if type(revision) is not int or revision != details["revision"]:
+                raise ValueError("Work item changed during native authorization")
+        return story, task, children
+
+    def resolve(self, request: dict[str, Any]) -> dict[str, Any]:
+        repository = request["repository_name"]
+        story, task, children = self._authorized_details(request)
         user = self.gateway.client.call("get_active_user", {})
         identity = user.get("id", user.get("email"))
-        if not identity or not self.project or not self.area or not story.get("title"):
-            raise ValueError("Active user/project/area/title required")
+        if not identity:
+            match = re.fullmatch(r"Usuario ativo:\s*(?:[^<>]*<([^<>\s]+@[^<>\s]+)>|([^<>\s]+@[^<>\s]+))", str(user.get("message", "")))
+            identity = (match.group(1) or match.group(2)) if match else None
+        if not identity or not self.project or not story.get("title"):
+            raise ValueError("Active user/project/title required")
         return {"story_id": request["story_id"], "task_id": request["task_id"], "child_ids": children,
                 "repository": repository, "project": self.project, "area": self.area,
                 "user_id": identity, "title": story["title"], "revision": story["revision"], "status": story["status"]}
 
     def snapshot(self, context: dict[str, Any]) -> dict[str, Any]:
-        story, task = self._details(context["story_id"]), self._details(context["task_id"])
-        if story.get("repository_name") != context["repository"] or task.get("parent_id") != context["story_id"]:
-            raise ValueError("Authoritative ownership changed")
+        for field, current in (("project", self.project), ("area", self.area)):
+            if field in context and context[field] != current:
+                raise ValueError("Operator configuration changed; obtain a new preview and receipt")
+        story, task, children = self._authorized_details({
+            "story_id": context["story_id"], "task_id": context["task_id"], "repository_name": context["repository"],
+        })
         state = active_state()
         completion = state.get("observability", {}).get("flow_name") == "story_completion"
         evidence = self.gateway.journal.get(f'task:{context["repository"]}:{context["task_id"]}:commit')
@@ -425,7 +543,7 @@ class MCPContext:
             except (subprocess.SubprocessError, IndexError):
                 up_to_date = False
         return {"revision": story["revision"] if completion else task["revision"],
-                "status": story["status"], "task_status": task["status"], "child_ids": story.get("child_ids"),
+                "status": story["status"], "task_status": task["status"], "child_ids": children,
                 "implementation_complete": ready, "tests_passed": ready, "base_up_to_date": up_to_date}
 
 
@@ -448,6 +566,15 @@ class MCPPullRequests:
                  "important_points": "Draft; review required.", "tests_updated": True,
                  "mermaid_diagram": "flowchart LR\n  Story --> DraftPR\n  DraftPR --> Review"}
         native = self.gateway.client.call("preview_story_pull_request", arguments)
+        if native.get("existing_active_pull_request") is not None or native.get("can_open_pull_request") is not True:
+            raise ValueError("Existing PR requires reconciliation before a new preview")
+        association = native.get("branch_association_preview", {})
+        targets = {context["story_id"], *context["child_ids"]}
+        linked = {item["id"] for item in association.get("work_items", []) if item.get("branch_linked") is True}
+        if (association.get("project") != context["project"]
+                or association.get("repository_name") != context["repository"]
+                or association.get("story_id") != context["story_id"] or linked != targets):
+            raise ValueError("Parent and children must already be linked to the approved branch")
         native_body = native.get("body_markdown")
         if not isinstance(native_body, str) or not native_body:
             raise ValueError("Structured native PR body required")
@@ -461,10 +588,12 @@ class MCPPullRequests:
         arguments = {**preview["native_arguments"], "expected_revision": preview["expected_revision"]}
         arguments["expected_revisions"] = preview["expected_revisions"]
         result = self.gateway.execute("draft_pr", "create_story_pull_request", arguments, key)
+        if result.get("created") is not True:
+            raise ValueError("A racing existing PR requires reconcile before reuse")
         if result.get("body_markdown") != preview["body"]:
             raise ValueError("Created PR body differs from approved native preview; reconcile")
         pull_request = result.get("pull_request", result)
-        return {**result, "url": pull_request.get("url"), "is_draft": pull_request.get("is_draft")}
+        return {**result, "url": pull_request.get("web_url", pull_request.get("url")), "is_draft": pull_request.get("is_draft")}
 
 
 @dataclass(frozen=True)
@@ -540,6 +669,7 @@ class OperatorTasks:
         if state["verified_lifecycle_binding"]["preview"] != self.plan(state["context"]):
             raise ValueError("Operator plan differs from approved plan")
         def execute() -> dict[str, Any]:
+            active_state("implement")
             evidence = self._run(plan, plan.implementation_command)
             if evidence["returncode"] != 0:
                 raise RuntimeError("Trusted implementation command failed")
@@ -571,9 +701,11 @@ class OperatorTasks:
         if not set(staged) <= set(plan.files):
             raise ValueError("Unrelated staged files block commit")
         def execute() -> dict[str, Any]:
+            active_state("commit")
             git(repository, "add", "--", *plan.files)
             if not git(repository, "diff", "--cached", "--name-only"):
                 raise ValueError("No authorized changes to commit")
+            active_state("commit")
             git(repository, "commit", "-m", f"KL-{task_id}: {plan.logic}")
             result = {"commit": git(repository, "rev-parse", "HEAD"), "tests_passed": True, "plan_id": plan_id}
             self.journal.put(f'task:{plan.repository}:{task_id}:commit', result)
@@ -602,9 +734,14 @@ class MCPDebtPreparation:
         return normalized
 
     def find_similar(self, repository_name: str, title: str, context: str) -> dict[str, Any]:
-        return self.gateway.client.call("find_similar_technical_debts", {
-            "repository_name": repository_name, "title": title, "context": context,
+        result = self.gateway.client.call("find_similar_technical_debts", {
+            "repository_name": repository_name, "title": title, "description": context,
         })
+        if (result.get("repository_name") != repository_name or result.get("query_title") != title
+                or type(result.get("duplicate_found")) is not bool
+                or not isinstance(result.get("suggested_matches"), list)):
+            raise ValueError("Structured native duplicate evidence required")
+        return {**result, "exact_match": result["duplicate_found"], "similar_items": result["suggested_matches"]}
 
     def save_repository_context(self, repository: str, similarity: dict[str, Any], *, key: str) -> str:
         self.gateway.journal.put(key, {"repository": repository, "similarity": similarity})

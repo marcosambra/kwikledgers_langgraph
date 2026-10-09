@@ -212,7 +212,9 @@ class WorkItemCreationTests(CreationHarness, TestCase):
     def test_creation_uses_real_issuer_with_exact_approved_payload(self):
         from kwikledgers_langgraph.fastmcp_execution_capability import issue_lifecycle_execution_capability
 
-        self.gateway.execution_issuer = issue_lifecycle_execution_capability
+        self.gateway.execution_issuer = lambda state, **arguments: issue_lifecycle_execution_capability(
+            state, now=NOW, **arguments,
+        )
         graph, config, first = self.preview()
         with patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "fixture-execution-key"}):
             self.assertEqual(self.approve(graph, config, first)["outcome"], "completed")

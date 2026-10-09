@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
 from kwikledgers_langgraph.fastmcp_adapters import technical_arguments_for_capability
 from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
 from kwikledgers_langgraph.guardrails import (
+    ApprovalRequiredError,
     OperationKind,
     allow_without_approval,
     build_approval_confirmation,
@@ -98,6 +100,19 @@ def run_preview_step(
     request = dict(state.get(request_key, {}))
     try:
         preview = preview_operation(request)
+        capability_name = {
+            "story_branch_association.preview": "associate_story_branch",
+            "story_pull_request.preview": "create_story_pull_request",
+            "story_status_transition.preview": "update_story_status",
+            "task_closure.preview": "update_work_item_effort",
+        }.get(action)
+        if capability_name and not is_legacy_backend(state) and preview.get("closure_allowed") is not False:
+            preview = {
+                **preview,
+                "execution_arguments": technical_arguments_for_capability(
+                    capability_name, {**request, "preview": preview},
+                ),
+            }
     except Exception as error:
         error_updates = append_error(state, f"{failed_message}: {error}")
         failed = record_runtime_event(
@@ -247,11 +262,22 @@ def run_execute_step(
         backend_name = str(dict(state.get("observability", {})).get("backend_name") or "fastmcp").strip().lower()
         if backend_name != "legacy" and fastmcp_capability_name:
             require_signed_execution_approval(state, action=approval_action or node)
+            approved_preview = dict(state["pending_approval"]["preview"])
+            arguments = technical_arguments_for_capability(fastmcp_capability_name, effective_request)
+            approved_arguments = approved_preview.get("execution_arguments")
+            if approved_arguments is None:
+                approved_arguments = technical_arguments_for_capability(
+                    fastmcp_capability_name, {**approved_preview, "preview": approved_preview},
+                )
+            if json.dumps(arguments, sort_keys=True, allow_nan=False) != json.dumps(
+                approved_arguments, sort_keys=True, allow_nan=False,
+            ):
+                raise ApprovalRequiredError("Execution payload does not match the approved preview.")
             effective_request["execution_capability"] = issue_execution_capability(
                 state,
                 action=approval_action or node,
                 capability_name=fastmcp_capability_name,
-                arguments=technical_arguments_for_capability(fastmcp_capability_name, effective_request),
+                arguments=arguments,
             )
         result = execute_operation(effective_request)
     except Exception as error:

@@ -13,6 +13,7 @@ from kwikledgers_langgraph.graphs.mutable_flow import (
     stop_without_execution,
     validate_required_request,
 )
+from kwikledgers_langgraph.guardrails import is_legacy_backend
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error
 from kwikledgers_langgraph.task_closure_policy import build_task_closure_preview
@@ -38,6 +39,25 @@ def build_task_closure_graph(ports: TaskClosurePorts) -> Any:
         )
 
     def preview_task_closure(state: AgentState) -> dict[str, Any]:
+        def build_preview(request: dict[str, Any]) -> dict[str, Any]:
+            effective_request = dict(request)
+            previous_preview = dict(state.get("task_closure_preview", {}))
+            if not effective_request.get("close_time") and previous_preview.get("close_time"):
+                effective_request["close_time"] = previous_preview["close_time"]
+            preview = build_task_closure_preview(effective_request)
+            if not is_legacy_backend(state):
+                native_preview_operation = getattr(ports.closures, "preview_task_closure", None)
+                if not callable(native_preview_operation):
+                    raise ValueError("Native task closure preview is required for FastMCP.")
+                native_preview = native_preview_operation(effective_request)
+                if not isinstance(native_preview, dict):
+                    raise ValueError("Native task closure preview must be structured.")
+                revision = native_preview.get("task_revision")
+                if native_preview.get("task_id") != preview["task_id"] or type(revision) is not int or revision <= 0:
+                    raise ValueError("Native task closure preview must bind the task and a positive revision.")
+                preview["task_revision"] = revision
+            return preview
+
         def preview_validator(state: AgentState, _request: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any] | None:
             if preview.get("closure_allowed"):
                 return None
@@ -70,7 +90,7 @@ def build_task_closure_graph(ports: TaskClosurePorts) -> Any:
             completed_message="Preview de fechamento da task calculado com sucesso.",
             tracking_category="task_closure_preview",
             tracking_message="Preview de fechamento de task gerado pelo runtime LangGraph.",
-            preview_operation=build_task_closure_preview,
+            preview_operation=build_preview,
             tracking_payload_builder=lambda request, preview: {
                 "task_id": request.get("task_id"),
                 "computed_hours": preview.get("computed_hours"),

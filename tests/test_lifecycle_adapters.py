@@ -291,6 +291,27 @@ class LifecycleEvidenceTests(TestCase):
                 MCPWorkItems(self.gateway).activate(self.preview, key="activate")
         self.issuer.assert_not_called()
 
+    def test_expiration_is_checked_after_journal_reservation(self):
+        def reserve(key, arguments, operation):
+            self.now += timedelta(minutes=5)
+            return operation()
+        with lifecycle_scope(self.state, self.approvals), patch.object(self.journal, "once", side_effect=reserve):
+            with self.assertRaises(ValueError):
+                MCPWorkItems(self.gateway).activate(self.preview, key="activate")
+        self.issuer.assert_not_called()
+        self.assertEqual(self.client.calls, [])
+
+    def test_expiration_during_issuance_blocks_the_native_call(self):
+        def issue(*args, **kwargs):
+            self.now += timedelta(minutes=5)
+            return "signed-capability"
+        self.issuer.side_effect = issue
+        with lifecycle_scope(self.state, self.approvals):
+            with self.assertRaises(ValueError):
+                MCPWorkItems(self.gateway).activate(self.preview, key="activate")
+        self.issuer.assert_called_once()
+        self.assertEqual(self.client.calls, [])
+
     def test_payload_tampering_inside_scope_never_reaches_issuer(self):
         with lifecycle_scope(self.state, self.approvals):
             with self.assertRaises(ValueError):
@@ -323,6 +344,8 @@ class LifecycleEvidenceTests(TestCase):
                 "title": "lifecycle", "details": "{}", "source": "langgraph_lifecycle",
             }, "tracking")
         self.assertNotIn("verified_lifecycle_binding", self.issuer.call_args.args[0])
+        self.assertNotIn("pending_approval", self.issuer.call_args.args[0])
+        self.assertNotIn("approval_confirmation", self.issuer.call_args.args[0])
         self.assertEqual(self.issuer.call_args.kwargs["action"], "lifecycle_tracking")
 
     def test_operations_outside_scope_are_denied(self):

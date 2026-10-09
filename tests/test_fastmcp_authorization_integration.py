@@ -316,8 +316,15 @@ print(json.dumps({"accepted": True, "source": str(source)}))
         self.verify(token)
 
     def test_expired_issuance_and_future_issuance_are_rejected(self) -> None:
-        self.verify(self.issue(now=self.now - timedelta(minutes=6)), rejected="expirou")
-        self.verify(self.issue(now=self.now + timedelta(minutes=2)), rejected="futuro")
+        for issued, rejection in ((self.now - timedelta(minutes=6), "expirou"),
+                                  (self.now + timedelta(minutes=2), "futuro")):
+            with self.subTest(issued=issued):
+                with self.assertRaises((ValueError, ExecutionCapabilityError)):
+                    self.issue(now=issued)
+                payload = self.decode(self.issue())
+                payload["issued_at"] = issued.isoformat()
+                payload["expires_at"] = (issued + timedelta(minutes=5)).isoformat()
+                self.verify(self.sign_execution_payload(payload), rejected=rejection)
         self.assertFalse(self.ledger.exists())
 
     def test_tampered_signature_is_rejected_without_consuming(self) -> None:

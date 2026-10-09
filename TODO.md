@@ -9,22 +9,24 @@ Backlog operacional do `kwikledgers_langgraph/`.
   separa 12 leituras, duas prévias, nove ações atômicas aprovadas e sete rotas de lifecycle.
 - Imports neutros foram adicionados pelo fluxo principal.
 - A criação governada de `UserStory`, `Task` e `Bug`, com 15 campos nativos
-  e restrições fornecidas pelo host, está em integração.
+  e restrições fornecidas pelo host, passou nos testes locais com emissor real.
+- O fechamento diário e o hook são nativos e somente de prévia, sem escrita Azure.
 - A desativação do legado não foi concluída.
 
-## Evidências Anteriores
+## Evidências de 2026-10-09
 
-As contagens abaixo foram informadas pelo fluxo principal e não foram
-reexecutadas nesta edição documental. O registro antigo de 57 testes não
-descreve a suíte atual.
+Resultados executados na árvore de trabalho desta implementação.
+Comandos e limites estão na [evidência de validação](docs/native-runtime-validation-2026-10-09.md).
 
-| Verificação | Última evidência informada |
+| Verificação | Resultado executado |
 |---|---|
-| FastMCP | 119 testes aprovados anteriormente. |
-| LangGraph completo | 348 testes, com três falhas de expectativa de outcome; execução final após ajustes pendente. |
-| Lifecycle | 81 testes locais aprovados após ajustes. |
-| Atômico | 55 testes locais aprovados após ajustes. |
-| Locks | `poetry check --lock` aprovado em ambos os projetos após regeneração do lock LangGraph. |
+| FastMCP completo | 139 testes aprovados. |
+| LangGraph completo | 408 testes aprovados. |
+| Lifecycle operacional e adapters | 52 testes aprovados. |
+| Catálogo atômico e preparação de débito | 67 testes aprovados. |
+| Criação e emissor real | 39 testes aprovados. |
+| Instalação LangGraph e CLIs | `poetry install` e cinco entrypoints `--help` aprovados. |
+| Locks | `poetry check --lock` aprovado em ambos os projetos. |
 
 ## Implementado Localmente
 
@@ -39,16 +41,17 @@ descreve a suíte atual.
 
 ## Gates Técnicos e de Validação
 
-- [ ] Executar e registrar a suíte completa final do LangGraph; não declarar verde apenas pelos testes focados.
-- [ ] Concluir integração da criação governada e validar restrições reais do host/processo.
+- [x] Executar e registrar a suíte completa final do LangGraph.
+- [x] Concluir integração local da criação governada com recibo e emissor reais sob fixtures.
+- [ ] Validar restrições reais do host/processo para a criação governada.
 - [ ] Verificar aquisição externa de recibo assinado real pelo host, vínculo à prévia, expiração e rejeição de replay.
 - [ ] Executar smoke Azure autenticado de leitura; identidade local não comprova autenticação Azure.
 - [ ] Executar calendário Windows real no host suportado.
 - [ ] Executar instalações de especialistas preparadas e registrar resultados.
 - [ ] Executar pipelines preparados e registrar resultados.
 
-Não houve escrita Azure real nem commit neste recorte. Qualquer mutação
-externa exige prévia e aprovação específica, mesmo durante validação.
+Não houve escrita Azure real nem instalação do cron. Commits locais autorizados
+e testes com fixtures não autorizam mutações externas.
 
 ## Gates Operacionais de Retirada
 
@@ -66,9 +69,7 @@ Cada gate exige comando ou ação, resultado, revisão e data registrados.
 Testes focados não substituem a suíte final; mocks não substituem smokes
 externos; workflows preparados não equivalem a execução de CI.
 
-Nesta atualização, complemente somente o [histórico existente de 2026-09-30](../docs/history/kwikledgers-alteration-2026-09-30.md).
-A decisão da data operacional atual pertence ao fluxo principal, sem criar
-outro arquivo de histórico nesta edição.
+O registro desta implementação está no [histórico de 2026-10-09](../docs/history/kwikledgers-alteration-2026-10-09.md).
 
 Consulte [README.md](README.md) e o [guia de validação e desativação](../docs/validation/fastmcp-langgraph-legacy-sunset.md)
 para comandos, diagrama e checklist. Não há percentual estimado nem

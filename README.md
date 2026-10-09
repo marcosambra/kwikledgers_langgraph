@@ -34,6 +34,13 @@ Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
 - `KWIKLEDGERS_USER_EMAIL`: email explicito do usuario atual para o seam de identidade do runtime novo.
 - `KWIKLEDGERS_USER_DISPLAY_NAME`: nome exibido do usuario atual quando a identidade for resolvida por ambiente.
 
+Tracking nativo:
+
+- `KWIKLEDGERS_AI_TRACKING_ROOT`: diretório de tracking explícito, com precedência.
+- `KWIKLEDGERS_ROOT_DIR`: workspace; resolve `AI_Tracking` quando não há raiz explícita.
+- `KWIKLEDGERS_ENV_FILE`: arquivo de ambiente do runtime nativo, também usado
+	para configurar a assinatura das notificações solicitadas pela CLI de fechamento.
+
 ## Estrutura inicial
 
 - `kwikledgers_langgraph/state.py`: contrato tipado do estado compartilhado
@@ -85,25 +92,30 @@ poetry run kwikledgers-langgraph-story-status --help
 
 ## Fechamento de tarefas
 
-A única exceção autônoma de escrita no Azure é o fluxo `day_end_closure`:
-lançamento de horas e fechamento da task; se houver trabalho pendente às 18h,
-criação de uma task de continuação. As demais operações mantêm aprovação prévia.
+O fluxo `day_end_closure` gera somente a prévia de horas, fechamento e eventual
+continuação. Nenhum gatilho, manual, agendado ou de conclusão, escreve no Azure.
+A execução requer aprovação humana independente pelo lifecycle; evidência de
+atividade e testes aprovados não substitui essa aprovação.
 
 ```bash
-poetry install --extras legacy
-poetry run python -m kwikledgers_langgraph.day_end_closure_cli --trigger manual --timezone America/Sao_Paulo --dry-run
-bash scripts/register-day-end-closure.sh
+poetry install
+poetry run kwikledgers-langgraph-day-end-closure --trigger manual --backend fastmcp --timezone America/Sao_Paulo --dry-run
 ```
 
-O agendamento roda de segunda a sexta às 18h, no horário de São Paulo, e exige
-WSL e cron ativos. O comando da extensão **KwikLedgers: Fechamento de Fim de Dia
-(manual)** oferece dry run ou execução. Sem atividade vinculada à task, o fluxo
-não lança horas; várias tasks ativas sem seleção explícita impedem o fechamento.
+O gerador `scripts/register-day-end-closure.sh` prepara uma prévia nativa às 18h,
+de segunda a sexta, e exige cron, os dois runtimes locais e o fuso de São Paulo.
+O arquivo de ambiente deve ser absoluto, existente e legível, sem `%` ou quebra
+de linha; o padrão é `kwikledgers_fastmcp/.env`. A instalação do agendamento é
+uma ação operacional separada e não foi executada nesta validação.
+Sem atividade vinculada à task, a prévia é ignorada; várias tasks ativas sem
+seleção explícita impedem a seleção automática. A CLI usa FastMCP por padrão,
+inclusive quando chamada por consumidores que não selecionam um backend.
 
 O hook de conclusão exige testes aprovados, evidência separada de trabalho e
 evento da mesma sessão. Usa o horário registrado da conclusão e bloqueia sessões
-de implementação somente local. Atualização atômica com revisão e journal local
-evita repetir lançamentos. Falhas parciais exigem conferência antes de nova escrita.
+de implementação somente local. O hook resolve tracking sem importar o legado
+e bloqueia journals incompletos. Escritas aprovadas em outros fluxos usam revisão
+nativa e journal durável; resultados desconhecidos exigem reconciliação.
 
 Na extensão, alertas de ociosidade estão habilitados. A continuação usa apenas
 arquivos locais, sem commit, push, PR ou alteração no Azure.
@@ -167,7 +179,8 @@ Exemplo:
 
 ```bash
 export KWIKLEDGERS_LEGACY_ROOT=/path/to/legacy/workspace
-poetry run kwikledgers-langgraph --disable-notifications
+poetry install --extras legacy
+poetry run kwikledgers-langgraph --backend legacy --disable-notifications
 ```
 
 ## Guardrails e observabilidade
@@ -219,6 +232,12 @@ Os estados salvos de fluxos mutáveis exigem `KWIKLEDGERS_LANGGRAPH_STATE_SIGNIN
 
 Quando um backend FastMCP mutável estiver ativo, o LangGraph emite uma capability HMAC curta após o approval gate. Ela vincula a tool FastMCP, o digest do payload, o `request_id`, o `active_run_id` e a expiração; o FastMCP apenas valida esse vínculo antes de executar a primitiva atômica.
 
+No FastMCP, a retomada exige `--receipt` com recibo humano assinado produzido
+fora do runtime, após a prévia. O emissor revalida recibo, ação, payload exato
+e contexto autenticado; o token não pode ultrapassar a validade do recibo.
+`--approval-request-id` sozinho serve apenas à compatibilidade legada explícita.
+Não crie recibos no processo operacional para contornar esse contrato.
+
 Observabilidade externa minima:
 - por padrao, as CLIs gravam um resumo curto da execucao em `AI_Tracking/Metrics/ai-usage-log.md`
 - esse resumo reaproveita o formato que o `kl_observatory` ja parseia, sem acoplar o runtime ao banco/API do observatory
@@ -246,7 +265,7 @@ poetry run kwikledgers-langgraph-story-pr \
 ```bash
 poetry run kwikledgers-langgraph-story-pr \
 	--resume-state-file /tmp/story-pr-preview.json \
-	--approval-request-id REQUEST_ID_APROVADO \
+	--receipt /tmp/host-pr-receipt.json \
 	--save-state-file /tmp/story-pr-final.json \
 	--print-state
 ```
@@ -270,7 +289,7 @@ poetry run kwikledgers-langgraph-story-branch \
 ```bash
 poetry run kwikledgers-langgraph-story-branch \
 	--resume-state-file /tmp/story-branch-preview.json \
-	--approval-request-id REQUEST_ID_APROVADO \
+	--receipt /tmp/host-branch-receipt.json \
 	--save-state-file /tmp/story-branch-final.json \
 	--print-state
 ```
@@ -293,7 +312,7 @@ poetry run kwikledgers-langgraph-story-status \
 ```bash
 poetry run kwikledgers-langgraph-story-status \
 	--resume-state-file /tmp/story-status-preview.json \
-	--approval-request-id REQUEST_ID_APROVADO \
+	--receipt /tmp/host-status-receipt.json \
 	--save-state-file /tmp/story-status-final.json \
 	--print-state
 ```
@@ -309,8 +328,10 @@ sem perder o contrato enxuto de preview, tracking e timeline.
 
 Os novos processos são isolados dos builders e CLIs legados. Nenhum backend
 Azure, git, FastMCP ou executor de código está conectado automaticamente.
-Os testes adicionados ainda precisam de execução; mocks não comprovam paridade
-operacional com o agente legado.
+As CLIs operacionais recebem configuração e planos explícitos do operador.
+Os testes locais passaram; mocks não comprovam paridade operacional externa.
+Consulte a [evidência de validação](docs/native-runtime-validation-2026-10-09.md):
+408 testes LangGraph e 139 FastMCP, com os gates externos ainda abertos.
 
 Builders públicos:
 

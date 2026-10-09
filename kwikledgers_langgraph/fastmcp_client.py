@@ -9,6 +9,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -25,6 +26,10 @@ def _default_stdio_command() -> str:
 
 class FastMCPClientError(RuntimeError):
     """A transport or response failure without request or credential material."""
+
+    def __init__(self, message: str, *, execution_outcome_unknown: bool = False) -> None:
+        super().__init__(message)
+        self.execution_outcome_unknown = execution_outcome_unknown
 
 
 class CapabilityClient(Protocol):
@@ -54,6 +59,13 @@ class FastMCPClientConfig:
                 raise ValueError("FastMCP HTTP URL is required.")
             if parsed.username or parsed.password:
                 raise ValueError("Credentials must not be embedded in the FastMCP URL.")
+            if parsed.hostname != "localhost":
+                try:
+                    loopback = ip_address(parsed.hostname).is_loopback
+                except ValueError:
+                    loopback = False
+                if not loopback:
+                    raise ValueError("Unauthenticated FastMCP HTTP requires a loopback host.")
 
     @classmethod
     def from_environment(cls) -> FastMCPClientConfig:
@@ -61,18 +73,40 @@ class FastMCPClientConfig:
         if not isinstance(args, list) or not all(isinstance(argument, str) for argument in args):
             raise ValueError("KWIKLEDGERS_FASTMCP_ARGS must be a JSON array of strings.")
         url = os.environ.get("KWIKLEDGERS_FASTMCP_URL")
+        try:
+            timeout_seconds = float(os.environ.get("KWIKLEDGERS_FASTMCP_TIMEOUT_SECONDS", "30"))
+        except ValueError:
+            timeout_seconds = 30.0
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            timeout_seconds = 30.0
         return cls(
             transport=os.environ.get("KWIKLEDGERS_FASTMCP_TRANSPORT", "http" if url else "stdio"),
             command=os.environ.get("KWIKLEDGERS_FASTMCP_COMMAND", _default_stdio_command()),
             args=tuple(args),
             url=url,
-            timeout_seconds=float(os.environ.get("KWIKLEDGERS_FASTMCP_TIMEOUT_SECONDS", "30")),
+            timeout_seconds=min(timeout_seconds, 3600.0),
         )
 
 
 class FastMCPClient:
     def __init__(self, config: FastMCPClientConfig | None = None) -> None:
         self.config = config if config is not None else FastMCPClientConfig.from_environment()
+
+    def _timeout_for_capability(self, capability_name: str) -> float:
+        if capability_name in {"create_calendar_event", "schedule_reminder", "get_upcoming_deadlines"}:
+            variable, default, attempts, margin = "KWIKLEDGERS_WINDOWS_OUTLOOK_TIMEOUT_SECONDS", 90, 1, 15
+        elif capability_name == "send_notification":
+            variable, default, attempts, margin = "KWIKLEDGERS_WINDOWS_NOTIFICATION_TIMEOUT_SECONDS", 20, 2, 5
+        else:
+            return self.config.timeout_seconds
+        environment = os.environ if self.config.env is None else self.config.env
+        try:
+            server_timeout = int(environment.get(variable, str(default)))
+        except ValueError:
+            server_timeout = default
+        if server_timeout <= 0:
+            server_timeout = default
+        return max(self.config.timeout_seconds, min(server_timeout, 300) * attempts + margin)
 
     def call(self, capability_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         def run() -> dict[str, Any]:
@@ -89,15 +123,21 @@ class FastMCPClient:
     async def acall(self, capability_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             result = await asyncio.wait_for(
-                self._request(capability_name, dict(arguments)), self.config.timeout_seconds,
+                self._request(capability_name, dict(arguments)), self._timeout_for_capability(capability_name),
             )
             return self._normalize(result, capability_name)
         except FastMCPClientError:
             raise
         except asyncio.TimeoutError:
-            raise FastMCPClientError("FastMCP request timed out; execution outcome may be unknown. Do not retry automatically.") from None
+            raise FastMCPClientError(
+                "FastMCP request timed out; execution outcome may be unknown. Do not retry automatically.",
+                execution_outcome_unknown=True,
+            ) from None
         except Exception:
-            raise FastMCPClientError("FastMCP request failed; execution outcome may be unknown. Do not retry automatically.") from None
+            raise FastMCPClientError(
+                "FastMCP request failed; execution outcome may be unknown. Do not retry automatically.",
+                execution_outcome_unknown=True,
+            ) from None
 
     async def _request(self, capability_name: str, arguments: dict[str, Any]) -> Any:
         if self.config.transport == "stdio":
@@ -107,8 +147,9 @@ class FastMCPClient:
             )
             async with stdio_client(parameters) as (read_stream, write_stream):
                 return await self._call_session(read_stream, write_stream, capability_name, arguments)
+        timeout = timedelta(seconds=self._timeout_for_capability(capability_name))
         async with streamablehttp_client(
-            self.config.url or "", timeout=timedelta(seconds=self.config.timeout_seconds),
+            self.config.url or "", timeout=timeout, sse_read_timeout=timeout,
         ) as (read_stream, write_stream, _get_session_id):
             return await self._call_session(read_stream, write_stream, capability_name, arguments)
 
@@ -116,7 +157,7 @@ class FastMCPClient:
         self, read_stream: Any, write_stream: Any, capability_name: str, arguments: dict[str, Any],
     ) -> Any:
         async with ClientSession(
-            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=self.config.timeout_seconds),
+            read_stream, write_stream, read_timeout_seconds=timedelta(seconds=self._timeout_for_capability(capability_name)),
         ) as session:
             await session.initialize()
             return await session.call_tool(capability_name, arguments={"arguments": arguments})

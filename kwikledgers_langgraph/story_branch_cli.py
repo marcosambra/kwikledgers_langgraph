@@ -119,7 +119,7 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
         if resolve_backend_name(getattr(arguments, "backend", None)) == "legacy":
             if not getattr(arguments, "approval_request_id", None):
                 raise StoryBranchCliError("Informe '--approval-request-id' para a retomada legada.")
-        elif not getattr(arguments, "receipt", None):
+        elif not getattr(arguments, "receipt", None) and not getattr(arguments, "approval_request_id", None):
             raise StoryBranchCliError("Informe '--receipt' ao usar '--resume-state-file' com FastMCP.")
         return
     if getattr(arguments, "receipt", None):

@@ -67,7 +67,8 @@ def load_resume_confirmation(
     state: AgentState, *, backend_name: str, receipt_file: str | None,
     resume_state_file: str, approval_request_id: str | None, approval_source: str,
 ) -> dict[str, Any]:
-    saved_backend = str(dict(state.get("observability", {})).get("backend_name") or "fastmcp").strip().lower()
+    observability = dict(state.get("observability", {}))
+    saved_backend = str(observability.get("backend_name") or "fastmcp").strip().lower()
     if backend_name != saved_backend:
         raise ValueError("O backend solicitado não corresponde ao preview salvo.")
     pending = dict(state.get("pending_approval", {}))
@@ -78,6 +79,14 @@ def load_resume_confirmation(
             request_id=approval_request_id, approved=True, approval_source=approval_source,
         )
     if not receipt_file:
+        if ("backend_name" not in observability
+                and not any(field in pending for field in ("preview_digest", "previewed_at", "receipt"))
+                and approval_request_id and approval_request_id == pending.get("request_id")
+                and observability.get("active_run_id")
+                and pending.get("run_id") == observability["active_run_id"]):
+            return build_approval_confirmation(
+                request_id=approval_request_id, approved=False, approval_source=approval_source,
+            )
         raise ValueError("Informe '--receipt' com a aprovação assinada independente.")
     if Path(receipt_file).resolve() == Path(resume_state_file).resolve():
         raise ValueError("O recibo deve estar em um arquivo separado do estado de retomada.")
