@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ from kwikledgers_langgraph.backend_factory import (
     LEGACY_BACKEND,
     BackendSelectionError,
     build_daily_summary_ports,
+    build_day_end_closure_ports,
     build_sprint_stories_ports,
     build_story_branch_association_ports,
     build_story_pull_request_ports,
@@ -18,14 +21,35 @@ from kwikledgers_langgraph.backend_factory import (
     resolve_backend_name,
 )
 from kwikledgers_langgraph.fastmcp_adapters import (
-    FastMCPDailySummaryProvider, FastMCPNotificationAdapter, FastMCPSprintStoriesProvider,
+    FastMCPDailySummaryProvider, FastMCPDayEndClosureAdapter, FastMCPNotificationAdapter, FastMCPSprintStoriesProvider,
     FastMCPStoryBranchAssociationAdapter, FastMCPStoryPullRequestAdapter,
     FastMCPStoryStatusTransitionAdapter, FastMCPTaskClosureAdapter, FastMCPTrackingSyncAdapter,
 )
-from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter, NoOpNotificationAdapter
+from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter
+from kwikledgers_langgraph.runtime_adapters import NoOpNotificationAdapter
 
 
 class BackendFactoryTestCase(unittest.TestCase):
+    def test_day_end_factory_supports_native_reads_and_explicit_rollback(self) -> None:
+        client = object()
+        native = build_day_end_closure_ports(backend_name=FASTMCP_BACKEND, client=client)
+        self.assertIsInstance(native.day_end, FastMCPDayEndClosureAdapter)
+        self.assertIs(native.day_end.client, client)
+        legacy = build_day_end_closure_ports(backend_name=LEGACY_BACKEND)
+        self.assertEqual(type(legacy.day_end).__name__, "LegacyDayEndClosureAdapter")
+        with self.assertRaises(BackendSelectionError):
+            build_day_end_closure_ports(backend_name="unknown")
+
+    def test_native_cli_import_does_not_load_legacy_adapters(self) -> None:
+        result = subprocess.run([
+            sys.executable, "-c",
+            "import sys; import kwikledgers_langgraph.day_end_closure_cli; "
+            "from kwikledgers_langgraph.backend_factory import build_day_end_closure_ports; "
+            "build_day_end_closure_ports(backend_name='fastmcp'); "
+            "assert 'kwikledgers_langgraph.legacy_adapters' not in sys.modules",
+        ], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_resolve_backend_name_defaults_to_fastmcp(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(resolve_backend_name(), FASTMCP_BACKEND)

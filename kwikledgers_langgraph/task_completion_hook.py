@@ -75,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
         for task_id in completed_task_ids(entries, now, session_id):
             journal = root / "Task_Control" / "day-end-closures" / f"{task_id}.json"
             if journal.exists():
+                if json.loads(journal.read_text(encoding="utf-8")).get("phase") != "completed":
+                    raise RuntimeError("Fechamento incompleto; reconcilie antes de continuar.")
                 continue
             output = io.StringIO()
             completed_at = max(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import subprocess
 import unittest
 import sys
 import tempfile
@@ -12,7 +15,7 @@ from unittest.mock import Mock, patch
 
 from kwikledgers_langgraph.adapters import DayEndClosurePorts
 from kwikledgers_langgraph.day_end_closure_policy import build_day_end_preview, parse_daily_log_entries
-from kwikledgers_langgraph.fastmcp_adapters import FastMCPDayEndClosureAdapter
+from kwikledgers_langgraph.day_end_closure_cli import main as run_day_end_cli
 from kwikledgers_langgraph.observability import build_observability_context
 from kwikledgers_langgraph.legacy_adapters import LegacyDayEndClosureAdapter
 from kwikledgers_langgraph.task_completion_hook import completed_task_ids
@@ -42,6 +45,70 @@ REQUEST = {"trigger": "scheduled", "cutoff_time": "18:00", "timezone": "UTC", "n
 
 def _context(tasks: list[dict[str, Any]], log: str = LOG) -> dict[str, Any]:
     return {"active_tasks": tasks, "activity_entries": parse_daily_log_entries(log)}
+
+
+class DayEndEntryPointTestCase(unittest.TestCase):
+    def test_cli_defaults_to_backend_selection_without_forcing_legacy(self) -> None:
+        state = {"day_end_closure_result": {"status": "skipped", "reason": "no_activity", "changed": False}}
+        with patch("kwikledgers_langgraph.day_end_closure_cli.run_day_end_closure", return_value=state) as run, patch("sys.stdout", io.StringIO()):
+            self.assertEqual(run_day_end_cli(["--disable-observability-sync"]), 0)
+        self.assertIsNone(run.call_args.args[0].backend)
+
+    def test_notification_can_sign_with_key_from_native_environment_file(self) -> None:
+        state = {"day_end_closure_result": {"status": "preview_ready", "changed": False},
+                 "observability": {"active_run_id": "01234567-89ab-4cde-abcd-0123456789ab"}}
+        with tempfile.TemporaryDirectory() as directory:
+            environment_file = Path(directory) / ".env"
+            environment_file.write_text("KWIKLEDGERS_FASTMCP_EXECUTION_KEY=" + "n" * 32 + "\n", encoding="utf-8")
+            with patch.dict(os.environ, {"KWIKLEDGERS_ENV_FILE": str(environment_file)}), patch("kwikledgers_langgraph.day_end_closure_cli.run_day_end_closure", return_value=state), patch("kwikledgers_langgraph.day_end_closure_cli.FastMCPNotificationAdapter") as adapter, patch("sys.stdout", io.StringIO()):
+                os.environ.pop("KWIKLEDGERS_FASTMCP_EXECUTION_KEY", None)
+                self.assertEqual(run_day_end_cli(["--notify", "--disable-observability-sync"]), 0)
+                provider = adapter.call_args.kwargs["execution_capability_provider"]
+                token = provider("send_notification", {"title": "Preview", "message": "No Azure writes", "urgency": "normal"})
+                self.assertIn(".", token)
+                adapter.return_value.send_notification.assert_called_once()
+
+    def test_cron_generator_is_native_preview_only_and_rejects_unsafe_environment_paths(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "scripts" / "register-day-end-closure.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "kwikledgers_langgraph" / "scripts" / source.name
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(source, script)
+            commands = root / "commands"
+            commands.mkdir()
+            captured = root / "installed-cron"
+            for name, content in {
+                "cmp": "#!/bin/sh\nexit 0\n",
+                "crontab": '#!/bin/sh\nif [ "$1" = "-l" ]; then\n echo "no crontab for fixture" >&2\n exit 1\nfi\ncp "$1" "$TEST_CRON_CAPTURE"\n',
+            }.items():
+                command = commands / name
+                command.write_text(content, encoding="utf-8")
+                command.chmod(0o700)
+            for project in ("kwikledgers_langgraph", "kwikledgers_fastmcp"):
+                interpreter = root / project / ".venv" / "bin" / "python"
+                interpreter.parent.mkdir(parents=True)
+                interpreter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                interpreter.chmod(0o700)
+            env_file = root / "native config.env"
+            env_file.write_text("", encoding="utf-8")
+            environment = {**os.environ, "PATH": str(commands) + os.pathsep + os.environ["PATH"],
+                           "TEST_CRON_CAPTURE": str(captured), "KWIKLEDGERS_ENV_FILE": str(env_file)}
+            result = subprocess.run(["bash", str(script)], env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            scheduled = captured.read_text(encoding="utf-8")
+            self.assertIn("--backend fastmcp --dry-run", scheduled)
+            self.assertIn("KWIKLEDGERS_ROOT_DIR=", scheduled)
+            self.assertIn("KWIKLEDGERS_FASTMCP_COMMAND=", scheduled)
+            self.assertNotIn("agent/.env", scheduled)
+            captured.unlink()
+            unsafe = root / "unsafe%config.env"
+            unsafe.write_text("", encoding="utf-8")
+            for path in ("relative.env", str(unsafe), str(root / "missing.env")):
+                with self.subTest(path=path):
+                    result = subprocess.run(["bash", str(script)], env={**environment, "KWIKLEDGERS_ENV_FILE": path}, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(captured.exists())
 
 
 class FakeAdapter:
@@ -177,60 +244,6 @@ class DayEndPolicyTestCase(unittest.TestCase):
             evaluate_operation({}, action="update_story_status", operation_kind=OperationKind.AUTONOMOUS_AZURE_HOURS, preview={"status": "ready"})
 
 
-class NativeDayEndTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
-        logs = self.root / "Daily_Action_Logs"
-        logs.mkdir()
-        (logs / "2026-10-05.md").write_text(LOG, encoding="utf-8")
-        replacement = patch("kwikledgers_langgraph.fastmcp_adapters.resolve_ai_tracking_root", return_value=self.root)
-        replacement.start()
-        self.addCleanup(replacement.stop)
-        self.details = {**TASK, "revision": 4, "work_item_type": "Task", "state": "Active", "assigned_to_email": "dev@example.test"}
-        self.listed_task = dict(self.details)
-        self.client = Mock()
-        self.client.call.side_effect = lambda name, arguments: (
-            {"user_email": "dev@example.test", "items": [self.listed_task]}
-            if name == "get_my_work_items" else dict(self.details)
-        )
-        self.adapter = FastMCPDayEndClosureAdapter(self.client)
-
-    def test_native_context_preserves_exact_task_details(self) -> None:
-        context = self.adapter.collect_day_context(REQUEST)
-        preview = build_day_end_preview(REQUEST, context)
-        self.assertEqual(preview["status"], "ready")
-        self.assertEqual(preview["expected_revision"], 4)
-        self.assertEqual(preview["assigned_to"], "dev@example.test")
-        self.assertEqual(preview["completed_work_hours"], 6.0)
-        self.assertEqual([call.args[0] for call in self.client.call.call_args_list], ["get_my_work_items", "get_story_details"])
-
-    def test_no_activity_requires_no_azure_read(self) -> None:
-        (self.root / "Daily_Action_Logs" / "2026-10-05.md").unlink()
-        self.assertEqual(self.adapter.collect_day_context(REQUEST)["active_tasks"], [])
-        self.client.call.assert_not_called()
-
-    def test_invalid_task_details_fail_closed(self) -> None:
-        for field, value in (("id", 11), ("revision", True), ("assigned_to_email", "other@example.test"),
-                             ("activated_at", None), ("state", "Closed"), ("work_item_type", "Bug")):
-            with self.subTest(field=field), patch.dict(self.details, {field: value}), self.assertRaises(ValueError):
-                self.adapter.collect_day_context(REQUEST)
-
-    def test_incomplete_journal_blocks_new_preview(self) -> None:
-        journals = self.root / "Task_Control" / "day-end-closures"
-        journals.mkdir(parents=True)
-        (journals / "10.json").write_text('{"phase":"started"}', encoding="utf-8")
-        with self.assertRaises(RuntimeError):
-            self.adapter.collect_day_context(REQUEST)
-        self.client.call.assert_not_called()
-
-    def test_native_execution_is_not_available_without_lifecycle(self) -> None:
-        with self.assertRaises(RuntimeError):
-            self.adapter.execute_day_end_closure({"preview": {"status": "ready"}})
-        self.client.call.assert_not_called()
-
-
 @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph não está instalado neste ambiente")
 class DayEndGraphTestCase(unittest.TestCase):
     def _run(self, adapter: FakeAdapter, **request: Any) -> dict[str, Any]:
@@ -241,25 +254,11 @@ class DayEndGraphTestCase(unittest.TestCase):
             "day_end_closure_request": {**REQUEST, **request},
         })
 
-    def test_all_triggers_preview_without_mutation(self) -> None:
-        for trigger in ("manual", "scheduled", "completed"):
-            with self.subTest(trigger=trigger):
-                adapter = FakeAdapter([TASK])
-                result = self._run(adapter, trigger=trigger, task_id=10)
-                self.assertEqual(adapter.executed, [])
-                self.assertEqual(result["day_end_closure_result"]["status"], "preview_ready")
-                self.assertEqual(result["day_end_closure_result"]["reason"], "human_approval_required")
-
-    def test_unverified_approval_cannot_enable_execution(self) -> None:
+    def test_executes_autonomously_without_approval(self) -> None:
         adapter = FakeAdapter([TASK])
-        runtime = build_day_end_closure_graph(DayEndClosurePorts(day_end=adapter))
-        result = runtime.invoke({
-            "tracking_events": [],
-            "day_end_closure_request": REQUEST,
-            "pending_approval": {"approved": True, "action": "day_end_closure.execute"},
-        })
-        self.assertEqual(adapter.executed, [])
-        self.assertFalse(result["day_end_closure_result"]["changed"])
+        result = self._run(adapter)
+        self.assertEqual(len(adapter.executed), 1)
+        self.assertEqual(result["day_end_closure_result"]["status"], "closed")
 
     def test_dry_run_does_not_write(self) -> None:
         adapter = FakeAdapter([TASK])

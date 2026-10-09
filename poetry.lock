@@ -3019,9 +3019,9 @@ files = [
 cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and python_version < \"3.14\"", "cffi (>=2.0.0b0) ; platform_python_implementation != \"PyPy\" and python_version >= \"3.14\""]
 
 [extras]
-legacy = ["azure-devops", "msrest", "python-dotenv"]
+legacy = ["azure-devops", "msrest"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<4.0"
-content-hash = "7d01199a4a04ad3432974df53e4ffebdc78f4c314c44108484617592a6bbf258"
+content-hash = "b7be9c56b37dbe05d52061b6ca0abd49c5524e34edb9b6b46ccb72ff59796fc5"

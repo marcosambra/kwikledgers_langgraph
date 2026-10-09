@@ -16,17 +16,8 @@ from kwikledgers_langgraph.adapters import (
     StoryStatusTransitionPorts,
     TaskClosurePorts,
 )
-from kwikledgers_langgraph.legacy_adapters import (
+from kwikledgers_langgraph.runtime_adapters import (
     EnvironmentIdentityResolverAdapter,
-    LegacyDailySummaryProvider,
-    LegacyDayEndClosureAdapter,
-    LegacyNotificationAdapter,
-    LegacySprintStoriesProvider,
-    LegacyStoryBranchAssociationAdapter,
-    LegacyStoryPullRequestAdapter,
-    LegacyStoryStatusTransitionAdapter,
-    LegacyTaskClosureAdapter,
-    LegacyTrackingSyncAdapter,
     NoOpNotificationAdapter,
 )
 
@@ -45,6 +36,8 @@ def build_day_end_closure_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
 ) -> DayEndClosurePorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacyDayEndClosureAdapter
+
         return DayEndClosurePorts(day_end=LegacyDayEndClosureAdapter())
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPDayEndClosureAdapter
@@ -69,6 +62,10 @@ def build_daily_summary_ports(
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> DailySummaryPorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import (
+            LegacyDailySummaryProvider, LegacyNotificationAdapter, LegacyTrackingSyncAdapter,
+        )
+
         notifications = LegacyNotificationAdapter() if notifications_enabled else NoOpNotificationAdapter()
         return DailySummaryPorts(
             identity=EnvironmentIdentityResolverAdapter(),
@@ -100,6 +97,8 @@ def build_story_pull_request_ports(
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryPullRequestPorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacyStoryPullRequestAdapter
+
         return StoryPullRequestPorts(pull_requests=LegacyStoryPullRequestAdapter())
 
     if backend_name == FASTMCP_BACKEND:
@@ -117,6 +116,8 @@ def build_story_branch_association_ports(
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryBranchAssociationPorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacyStoryBranchAssociationAdapter
+
         return StoryBranchAssociationPorts(branches=LegacyStoryBranchAssociationAdapter())
 
     if backend_name == FASTMCP_BACKEND:
@@ -134,6 +135,8 @@ def build_story_status_transition_ports(
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryStatusTransitionPorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacyStoryStatusTransitionAdapter
+
         return StoryStatusTransitionPorts(statuses=LegacyStoryStatusTransitionAdapter())
 
     if backend_name == FASTMCP_BACKEND:
@@ -151,6 +154,8 @@ def build_task_closure_ports(
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> TaskClosurePorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacyTaskClosureAdapter
+
         return TaskClosurePorts(closures=LegacyTaskClosureAdapter())
 
     if backend_name == FASTMCP_BACKEND:
@@ -165,6 +170,8 @@ def build_task_closure_ports(
 
 def build_sprint_stories_ports(*, backend_name: str, client: CapabilityClient | None = None) -> SprintStoriesPorts:
     if backend_name == LEGACY_BACKEND:
+        from kwikledgers_langgraph.legacy_adapters import LegacySprintStoriesProvider
+
         return SprintStoriesPorts(stories=LegacySprintStoriesProvider())
 
     if backend_name == FASTMCP_BACKEND:
