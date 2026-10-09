@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from kwikledgers_langgraph.adapters import (
     DailySummaryPorts,
+    DayEndClosurePorts,
     SprintStoriesPorts,
     StoryBranchAssociationPorts,
     StoryPullRequestPorts,
@@ -18,6 +19,7 @@ from kwikledgers_langgraph.adapters import (
 from kwikledgers_langgraph.legacy_adapters import (
     EnvironmentIdentityResolverAdapter,
     LegacyDailySummaryProvider,
+    LegacyDayEndClosureAdapter,
     LegacyNotificationAdapter,
     LegacySprintStoriesProvider,
     LegacyStoryBranchAssociationAdapter,
@@ -37,6 +39,18 @@ BACKEND_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_BACKEND"
 
 class BackendSelectionError(RuntimeError):
     """Raised when a backend is invalid or not yet available for a capability."""
+
+
+def build_day_end_closure_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+) -> DayEndClosurePorts:
+    if backend_name == LEGACY_BACKEND:
+        return DayEndClosurePorts(day_end=LegacyDayEndClosureAdapter())
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPDayEndClosureAdapter
+
+        return DayEndClosurePorts(day_end=FastMCPDayEndClosureAdapter(client))
+    raise BackendSelectionError("Backend indisponivel para a capability 'day_end_closure'.")
 
 
 def resolve_backend_name(explicit_backend: str | None = None) -> str:

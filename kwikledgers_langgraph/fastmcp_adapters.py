@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from kwikledgers_langgraph.day_end_closure_policy import (
+    _human_activity_timestamps, _parse_timestamp, _resolve_timezone, parse_daily_log_entries,
+)
 from kwikledgers_langgraph.fastmcp_client import CapabilityClient, FastMCPClient
+from kwikledgers_langgraph.observability import resolve_ai_tracking_root
 
 
 ExecutionCapabilityProvider = Callable[[str, dict[str, Any]], str]
@@ -126,6 +131,71 @@ class FastMCPDailySummaryProvider(_FastMCPAdapter):
         return self.client.call("get_my_daily_summary", {})
 
 
+class FastMCPDayEndClosureAdapter(_FastMCPAdapter):
+    def collect_day_context(self, request: dict[str, Any]) -> dict[str, Any]:
+        zone = _resolve_timezone(request.get("timezone"))
+        current = (_parse_timestamp(request.get("now")) or datetime.now(timezone.utc)).astimezone(zone)
+        root = resolve_ai_tracking_root()
+        stamps = {
+            (current + timedelta(days=offset)).astimezone(timezone.utc).date().isoformat()
+            for offset in (-1, 0, 1)
+        } | {current.date().isoformat()}
+        entries: list[dict[str, str]] = []
+        for stamp in sorted(stamps):
+            log = root / "Daily_Action_Logs" / f"{stamp}.md"
+            if log.is_file():
+                entries.extend(parse_daily_log_entries(log.read_text(encoding="utf-8")))
+        if not _human_activity_timestamps(entries, current.date(), zone):
+            return {"active_tasks": [], "activity_entries": entries}
+        for journal in (root / "Task_Control" / "day-end-closures").glob("*.json"):
+            if json.loads(journal.read_text(encoding="utf-8")).get("phase") != "completed":
+                raise RuntimeError("Fechamento incompleto; reconcilie o Azure antes de gerar outra previa.")
+
+        summary = self.client.call("get_my_work_items", {})
+        email = summary.get("user_email")
+        items = summary.get("items")
+        if not isinstance(email, str) or not email.strip() or not isinstance(items, list):
+            raise ValueError("A leitura nativa deve informar usuario e itens atribuidos.")
+        active_tasks: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("A leitura nativa retornou um item invalido.")
+            if str(item.get("work_item_type", "")).casefold() != "task":
+                continue
+            if str(item.get("state", "")).strip().casefold() not in {"active", "ativa", "em andamento"}:
+                continue
+            task_id = item.get("id")
+            if type(task_id) is not int or task_id <= 0:
+                raise ValueError("A task nativa deve possuir um ID positivo.")
+            if request.get("task_id") and task_id != request["task_id"]:
+                continue
+            details = self.client.call("get_story_details", {"story_id": task_id})
+            revision = details.get("revision")
+            assigned_email = details.get("assigned_to_email")
+            if (
+                details.get("id") != task_id
+                or type(revision) is not int or revision <= 0
+                or str(details.get("work_item_type", "")).casefold() != "task"
+                or str(details.get("state", "")).strip().casefold() not in {"active", "ativa", "em andamento"}
+                or not isinstance(assigned_email, str)
+                or assigned_email.casefold() != email.casefold()
+            ):
+                raise ValueError("A task mudou ou nao pertence ao usuario da leitura nativa.")
+            if _parse_timestamp(details.get("activated_at")) is None:
+                raise ValueError("A task ativa deve informar sua data de ativacao.")
+            active_tasks.append({
+                **{field: details.get(field) for field in (
+                    "id", "title", "revision", "parent_id", "area_path", "iteration_path",
+                    "activated_at", "completed_work_hours",
+                )},
+                "assigned_to": assigned_email,
+            })
+        return {"active_tasks": active_tasks, "activity_entries": entries}
+
+    def execute_day_end_closure(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("O fechamento diario nativo fornece apenas previa; use o lifecycle com aprovacao humana.")
+
+
 class FastMCPSprintStoriesProvider(_FastMCPAdapter):
     def fetch_sprint_stories_detailed(self, request: dict[str, Any]) -> dict[str, Any]:
         return self.client.call("get_sprint_stories_detailed", {})
@@ -140,6 +210,9 @@ class FastMCPTrackingSyncAdapter(_FastMCPAdapter):
 
 
 class FastMCPNotificationAdapter(_FastMCPAdapter):
+    def send_notification(self, title: str, message: str, urgency: str = "normal") -> dict[str, Any]:
+        return self._execute("send_notification", {"title": title, "message": message, "urgency": urgency}, None)
+
     def send_daily_summary_notification(
         self, summary: dict[str, Any], *, execution_capability: str | None = None,
     ) -> dict[str, Any]:

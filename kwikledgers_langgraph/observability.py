@@ -252,6 +252,8 @@ def resolve_ai_tracking_root(explicit_root: str | Path | None = None) -> Path:
         raise RuntimeError("O tracking root informado para observabilidade nao existe.")
 
     explicit_env_root = os.environ.get("KWIKLEDGERS_AI_TRACKING_ROOT")
+    if not explicit_env_root and os.environ.get("KWIKLEDGERS_ROOT_DIR"):
+        explicit_env_root = str(Path(os.environ["KWIKLEDGERS_ROOT_DIR"]).expanduser() / "AI_Tracking")
     if explicit_env_root:
         candidate = Path(explicit_env_root).expanduser().resolve()
         if candidate.is_dir():

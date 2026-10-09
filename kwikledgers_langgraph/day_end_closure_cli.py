@@ -6,14 +6,16 @@ import json
 from typing import Any
 
 from kwikledgers_langgraph.backend_factory import build_day_end_closure_ports, resolve_backend_name
+from kwikledgers_langgraph.fastmcp_adapters import FastMCPNotificationAdapter
+from kwikledgers_langgraph.fastmcp_execution_capability import issue_runtime_execution_capability
 from kwikledgers_langgraph.observability import (
     append_runtime_observability_artifacts,
     build_observability_context,
+    resolve_ai_tracking_root,
 )
 from kwikledgers_langgraph.runtime import build_day_end_closure_runtime
 from kwikledgers_langgraph.state import AgentState, DayEndClosureRequest
 from kwikledgers_langgraph.state_persistence import write_state_file
-from kwikledgers_langgraph.legacy_adapters import _resolve_mcp_path
 
 
 def _build_initial_state(arguments: argparse.Namespace, backend_name: str) -> AgentState:
@@ -45,7 +47,7 @@ def run_day_end_closure(arguments: argparse.Namespace) -> dict[str, Any]:
     backend_name = resolve_backend_name(arguments.backend)
     runtime = build_day_end_closure_runtime(build_day_end_closure_ports(backend_name=backend_name))
     state = _build_initial_state(arguments, backend_name)
-    lock_dir = _resolve_mcp_path().parents[1] / "AI_Tracking" / "Task_Control"
+    lock_dir = resolve_ai_tracking_root() / "Task_Control"
     lock_dir.mkdir(parents=True, exist_ok=True)
     with (lock_dir / "day-end-closure.lock").open("a", encoding="utf-8") as handle:
         try:
@@ -77,9 +79,8 @@ def _notification_text(result: dict[str, Any]) -> tuple[str, str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Fechamento de fim de dia: lanca as horas da task Active, fecha a task e abre uma task de continuacao. "
-            "E a unica excecao em que o Azure DevOps e escrito sem aprovacao previa; nao faz nada se nao houve "
-            "atividade humana registrada hoje em AI_Tracking/Daily_Action_Logs."
+            "Previa de fechamento de fim de dia com atividade registrada em AI_Tracking. "
+            "Nao escreve no Azure; o fechamento exige execucao governada e aprovacao humana separada."
         ),
     )
     parser.add_argument("--trigger", choices=("manual", "scheduled", "completed"), default="manual")
@@ -88,8 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cutoff-time", default="18:00", help="Horario de corte local (HH:MM).")
     parser.add_argument("--timezone", default=None, help="Fuso IANA. Padrao: fuso local.")
     parser.add_argument("--dry-run", action="store_true", help="Gera o preview sem escrever no Azure.")
-    parser.add_argument("--no-continuation", action="store_true", help="Nao cria a task de continuacao.")
-    parser.add_argument("--backend", default="legacy", help="Somente 'legacy' esta disponivel.")
+    parser.add_argument("--no-continuation", action="store_true", help="Nao inclui continuacao na previa.")
+    parser.add_argument("--backend", default=None, help="Backend de leitura: fastmcp (padrao) ou legacy (rollback).")
     parser.add_argument("--notify", action="store_true", help="Envia notificacao com o resultado.")
     parser.add_argument("--save-state-file", default=None, help="Grava o estado final em JSON.")
     parser.add_argument("--print-state", action="store_true", help="Imprime o estado final completo em JSON.")
@@ -109,10 +110,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Aviso: falha ao sincronizar observabilidade externa: {error}")
     print(f"Fechamento de fim de dia executado com status '{outcome.get('status', 'completed')}'.")
     if args.notify and not (outcome.get("status") == "skipped" and outcome.get("reason") in {"no_activity", "no_task_activity", "no_active_task"}):
-        from kwikledgers_langgraph.legacy_adapters import send_legacy_notification
-
         try:
-            send_legacy_notification(*_notification_text(result))
+            notifications = FastMCPNotificationAdapter(
+                execution_capability_provider=lambda name, arguments: issue_runtime_execution_capability(
+                    result, action="day_end_closure.notification", capability_name=name, arguments=arguments,
+                ),
+            )
+            notifications.send_notification(*_notification_text(result))
         except Exception as error:
             print(f"Aviso: falha ao enviar notificacao: {error}")
     if args.save_state_file:
