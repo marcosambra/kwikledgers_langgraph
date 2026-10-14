@@ -14,6 +14,20 @@ Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
 aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
 O backend padrão é `fastmcp`; `legacy` existe somente como rollback temporário.
 
+## Catálogo de Grafos
+
+`python -m kwikledgers_langgraph.graph_catalog` retorna JSON com nós, conexões,
+fontes e Mermaid de 12 topologias reais, extraídas por `get_graph()` das fábricas.
+Não executa grafos, não registra assistants executáveis e não usa os mocks do
+Studio. Portas de inspeção bloqueiam qualquer chamada de integração; o
+checkpointer é somente em memória. Não exige credenciais Azure nem servidor.
+
+A extensão VS Code usa esse catálogo na seção **K > Grafos do LangGraph**.
+Criação de itens, mutações atômicas e execução de débito dependem de argumentos
+ou evidência preparada e não recebem uma topologia fictícia neste catálogo.
+O catálogo não expõe estados, recibos ou payloads operacionais. É uma superfície
+de inspeção, não substitui os eventos e traces do runtime no observatório.
+
 ## Modo de repositorio standalone
 
 O projeto foi estruturado para viver como um repositório próprio no GitHub.
