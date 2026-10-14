@@ -243,7 +243,7 @@ class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCa
         self.verifier_source = self.fastmcp_root / "src/kwikledgers_fastmcp/shared/execution_capability.py"
         if not self.python.is_file():
             self.skipTest("Separate FastMCP .venv/bin/python is required")
-        self.assertGreaterEqual(sys.version_info[:2], (3, 11), "LangGraph requires Python 3.11 or newer")
+        self.assertGreaterEqual(sys.version_info[:2], (3, 12), "LangGraph requires Python 3.12 or newer")
         self.assertTrue(self.verifier_source.is_file())
 
     def verify(
@@ -257,7 +257,7 @@ import json
 from pathlib import Path
 import sys
 
-assert sys.version_info[:2] >= (3, 10), "FastMCP requires Python 3.10 or newer"
+assert sys.version_info[:2] >= (3, 12), "FastMCP requires Python 3.12 or newer"
 assert Path(sys.prefix).resolve() == Path(sys.argv[2]).resolve(), "Separate FastMCP venv required"
 source = Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location("real_fastmcp_execution_capability", source)

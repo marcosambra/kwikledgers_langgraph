@@ -25,7 +25,7 @@ Read these files in this order before making non-trivial changes:
   is present.
 - Use helpers from `src/kwikledgers_langgraph/state.py` when appending
   decisions, tracking events, errors or observability timeline entries.
-- Keep Python compatibility at 3.10+.
+- Use Python 3.12 or newer for code, environments and tests.
 
 ## Legacy Boundary
 

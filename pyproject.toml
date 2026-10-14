@@ -3,7 +3,7 @@ name = "kwikledgers-langgraph"
 version = "0.1.0"
 description = "Parallel LangGraph runtime scaffold for KwikLedgers orchestration."
 readme = "README.md"
-requires-python = ">=3.11,<4.0"
+requires-python = ">=3.12,<4.0"
 authors = [
     { name = "KwikLedgers", email = "dev@kwikledgers.com" }
 ]
@@ -38,7 +38,7 @@ kwikledgers-langgraph-atomic = "kwikledgers_langgraph.atomic_cli:main"
 packages = [{ include = "kwikledgers_langgraph" }]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
+python = ">=3.12,<4.0"
 kwikledgers-fastmcp = { path = "../kwikledgers_fastmcp", develop = true }
 
 [build-system]

@@ -128,7 +128,7 @@ poetry run python -m unittest discover -s tests
 
 ## Interface visual (LangGraph Studio local)
 
-O projeto usa um único ambiente Poetry (Python 3.11+) que já inclui
+O projeto usa um único ambiente Poetry (Python 3.12+) que já inclui
 `langgraph-cli[inmem]` como dependência declarada em `pyproject.toml`. O
 Studio local sobe direto pelo mesmo `.venv` do projeto, sem venv separado,
 e usa apenas ports mockados (nunca os adapters legados reais) definidos em

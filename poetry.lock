@@ -3023,5 +3023,5 @@ legacy = ["azure-devops", "msrest"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.11,<4.0"
-content-hash = "b7be9c56b37dbe05d52061b6ca0abd49c5524e34edb9b6b46ccb72ff59796fc5"
+python-versions = ">=3.12,<4.0"
+content-hash = "d2a11f4028c8e48e764a7a4eb4246d77ea38f48cfb262055367d8231a98e045d"

@@ -50,6 +50,10 @@ if ! command -v "$python_command" >/dev/null 2>&1; then
 fi
 
 export SSL_CERT_FILE="$ca_bundle"
+if ! "$python_command" -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info[:2] < (4, 0) else 1)'; then
+    printf 'Python >=3.12,<4.0 is required.\n' >&2
+    exit 1
+fi
 export REQUESTS_CA_BUNDLE="${REQUESTS_CA_BUNDLE:-$ca_bundle}"
 export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$ca_bundle}"
 export POETRY_VIRTUALENVS_CREATE=true

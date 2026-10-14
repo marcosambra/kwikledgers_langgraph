@@ -9,7 +9,7 @@ Regras principais:
 - trate guardrails, observabilidade e approval gates como responsabilidades de primeira classe do runtime
 - para fluxos mutáveis de Azure, preserve o padrão preview-first e bloqueie a execução sem aprovação explícita no estado
 - para fluxos mutáveis, considere aprovação válida apenas quando ela vier depois do preview, por confirmação humana separada e vinculada à ação atual; o agente não deve pré-preencher `pending_approval.approved = true` para execução real
-- mantenha o código compatível com Python 3.10+
+- utilize somente Python 3.12 ou superior para implementação, ambientes e testes
 - documente qualquer mudança estrutural relevante no `README.md` e em `../docs/history/kwikledgers-alteration-YYYY-MM-DD.md` enquanto este diretório ainda viver dentro do workspace monorepo
 
 Comandos que devem ser priorizados pelo agente:
