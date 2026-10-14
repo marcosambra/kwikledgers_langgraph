@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
-import hmac
-import pickle
+import json
 from typing import Any, Callable
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -12,7 +11,7 @@ from kwikledgers_langgraph.adapters import LifecyclePorts
 from kwikledgers_langgraph.graphs.story_lifecycle import build_story_completion_graph, build_story_start_graph
 from kwikledgers_langgraph.graphs.task_lifecycle import build_task_cycle_graph
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
-from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal
+from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal, canonical
 
 
 def build_technical_debt_execution_graph(ports: LifecyclePorts, *, checkpointer: Any,
@@ -22,7 +21,7 @@ def build_technical_debt_execution_graph(ports: LifecyclePorts, *, checkpointer:
         raise ValueError("Technical debt execution requires operational work-item adapter")
     saved = gateway.journal.get(preview_key)
     if not saved or not isinstance(saved.get("technical_debt_preview"), dict):
-        raise ValueError("Signed prepared debt preview required")
+        raise ValueError("Durable prepared debt preview required")
     prepared = deepcopy(saved["technical_debt_preview"])
     repository = saved["repository"]
     ports.branches.path(repository)
@@ -69,6 +68,50 @@ def build_technical_debt_execution_graph(ports: LifecyclePorts, *, checkpointer:
                                  context_resolver=resolve, required_context=("repository",))
 
 
+def _encode_checkpoint(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {"type": "bytes", "value": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, (tuple, list)):
+        return {"type": "tuple" if isinstance(value, tuple) else "list",
+                "value": [_encode_checkpoint(item) for item in value]}
+    if isinstance(value, dict):
+        return {"type": "dict", "value": [[_encode_checkpoint(key), _encode_checkpoint(item)]
+                                          for key, item in value.items()]}
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    raise ValueError("Unsupported checkpoint value")
+
+
+def _decode_checkpoint(value: Any) -> Any:
+    if not isinstance(value, dict):
+        if value is None or type(value) in (str, int, float, bool):
+            return value
+        raise ValueError("Invalid checkpoint value")
+    if set(value) != {"type", "value"}:
+        raise ValueError("Invalid checkpoint encoding")
+    kind, data = value["type"], value["value"]
+    if kind == "bytes" and isinstance(data, str):
+        return base64.b64decode(data, validate=True)
+    if not isinstance(data, list):
+        raise ValueError("Invalid checkpoint collection")
+    if kind == "tuple":
+        return tuple(_decode_checkpoint(item) for item in data)
+    if kind == "list":
+        return [_decode_checkpoint(item) for item in data]
+    if kind == "dict":
+        result = {}
+        for pair in data:
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise ValueError("Invalid checkpoint mapping")
+            key, item = pair
+            decoded = _decode_checkpoint(key)
+            if decoded in result:
+                raise ValueError("Duplicate checkpoint key")
+            result[decoded] = _decode_checkpoint(item)
+        return result
+    raise ValueError("Unknown checkpoint encoding")
+
+
 class SignedLifecycleCheckpointer(MemorySaver):
     def __init__(self, journal: LifecycleJournal) -> None:
         super().__init__()
@@ -77,10 +120,15 @@ class SignedLifecycleCheckpointer(MemorySaver):
         self.journal.db.commit()
         row = self.journal.db.execute("SELECT payload, signature FROM lifecycle_checkpoint WHERE id = 1").fetchone()
         if row is not None:
-            expected = hmac.new(journal.key, ("checkpoint\n" + row[0]).encode(), "sha256").hexdigest()
-            if not hmac.compare_digest(expected, row[1]):
-                raise ValueError("Checkpoint signature invalid; refusing deserialization")
-            storage, writes, blobs = pickle.loads(base64.b64decode(row[0], validate=True))
+            if not row[0].startswith("json:"):
+                raise ValueError("Checkpoint legado não é aceito. Gere uma nova prévia.")
+            expected = journal._signature("checkpoint", row[0])
+            if expected != row[1]:
+                raise ValueError("Checkpoint antigo ou corrompido. Gere uma nova prévia.")
+            restored = _decode_checkpoint(json.loads(row[0][5:]))
+            if not isinstance(restored, tuple) or len(restored) != 3 or any(not isinstance(item, dict) for item in restored):
+                raise ValueError("Invalid checkpoint state")
+            storage, writes, blobs = restored
             for thread_id, namespaces in storage.items():
                 self.storage[thread_id].update(namespaces)
             self.writes.update(writes)
@@ -88,8 +136,8 @@ class SignedLifecycleCheckpointer(MemorySaver):
 
     def _persist(self) -> None:
         storage = {thread_id: dict(namespaces) for thread_id, namespaces in self.storage.items()}
-        payload = base64.b64encode(pickle.dumps((storage, dict(self.writes), dict(self.blobs)))).decode("ascii")
-        signature = hmac.new(self.journal.key, ("checkpoint\n" + payload).encode(), "sha256").hexdigest()
+        payload = "json:" + canonical(_encode_checkpoint((storage, dict(self.writes), dict(self.blobs))))
+        signature = self.journal._signature("checkpoint", payload)
         with self.journal.db:
             self.journal.db.execute("INSERT OR REPLACE INTO lifecycle_checkpoint VALUES (1, ?, ?)", (payload, signature))
 
@@ -118,6 +166,6 @@ def build_lifecycle_runtime(name: str, ports: LifecyclePorts, *, checkpointer: A
                             preview_key: str | None = None) -> Any:
     if name == "technical_debt_execute":
         if not preview_key:
-            raise ValueError("Technical debt execution requires a signed prepared preview key")
+            raise ValueError("Technical debt execution requires a durable prepared preview key")
         return build_technical_debt_execution_graph(ports, checkpointer=checkpointer, preview_key=preview_key)
     return LIFECYCLE_BUILDERS[name](ports, checkpointer=checkpointer)

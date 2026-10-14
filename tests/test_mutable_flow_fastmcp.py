@@ -9,6 +9,7 @@ import hmac
 import importlib.util
 import json
 import os
+import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -23,9 +24,9 @@ from kwikledgers_langgraph.fastmcp_adapters import (
 )
 from kwikledgers_langgraph.graphs.mutable_flow import run_execute_step
 from kwikledgers_langgraph.guardrails import (
-    OperationKind, build_approval_confirmation, build_bound_approval, evaluate_operation,
+    OperationKind, build_approval_confirmation, build_bound_approval, evaluate_operation, load_resume_confirmation,
 )
-from kwikledgers_langgraph.lifecycle_adapters import canonical
+from kwikledgers_langgraph.lifecycle_adapters import ExplicitLocalApproval, canonical
 from kwikledgers_langgraph.observability import build_observability_context
 from kwikledgers_langgraph.state_persistence import write_state_file
 
@@ -58,9 +59,13 @@ class VerifyingClient:
         token = payload.pop("execution_capability")
         encoded, signature = token.split(".", 1)
         serialized = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        expected_signature = hmac.new(EXECUTION_KEY.encode(), serialized, "sha256").hexdigest()
-        if not hmac.compare_digest(expected_signature, signature):
-            raise AssertionError("Invalid execution token signature")
+        if signature != "local-v1":
+            raise AssertionError("Only local execution tokens are supported")
+        with sqlite3.connect(os.environ["KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER"]) as connection:
+            row = connection.execute("SELECT token_digest FROM local_execution_capabilities WHERE token_digest = ?",
+                                     (hashlib.sha256(token.encode("ascii")).hexdigest(),)).fetchone()
+        if row is None:
+            raise AssertionError("Execution token must be registered")
         claims = json.loads(serialized)
         digest = hashlib.sha256(json.dumps(
             payload, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":"),
@@ -76,7 +81,10 @@ class VerifyingClient:
 
 class ReceiptFixture(unittest.TestCase):
     def setUp(self) -> None:
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
         environment = patch.dict(os.environ, {
+            "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(Path(directory.name) / "ledger.sqlite3"),
             "KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": APPROVAL_KEY,
             "KWIKLEDGERS_FASTMCP_EXECUTION_KEY": EXECUTION_KEY,
             "KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY": "independent-state-file-key",
@@ -86,6 +94,8 @@ class ReceiptFixture(unittest.TestCase):
         self.addCleanup(environment.stop)
 
     def receipt(self, pending: dict, **changes) -> dict:
+        if not changes:
+            return ExplicitLocalApproval().confirm(pending, pending["request_id"])
         now = datetime.now(timezone.utc)
         claims = {field: pending[field] for field in ("action", "run_id", "request_id", "preview_digest")}
         claims.update({"decision": "approve", "subject": "independent-human",
@@ -112,6 +122,23 @@ class ReceiptFixture(unittest.TestCase):
 
 
 class MutableReceiptGuardrailTests(ReceiptFixture):
+    def test_explicit_confirmation_without_key_is_bound_to_exact_preview(self) -> None:
+        with patch.dict(os.environ, {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": ""}):
+            state = self.state()
+            state["approval_confirmation"] = load_resume_confirmation(
+                state, backend_name="fastmcp", receipt_file=None, resume_state_file="preview.json",
+                approval_request_id=state["pending_approval"]["request_id"], approval_source="human",
+            )
+            self.assertTrue(self.evaluate(state)["pending_approval"]["approved"])
+            for field in ("preview", "request_id", "run_id", "action"):
+                changed = deepcopy(state)
+                if field == "preview":
+                    changed["pending_approval"][field]["target_status"] = "Homologação"
+                else:
+                    changed["pending_approval"][field] = "foreign"
+                with self.subTest(field=field):
+                    self.assertFalse(self.evaluate(changed)["pending_approval"]["approved"])
+
     def test_nonobject_confirmation_is_rejected_without_crashing(self) -> None:
         state = self.state()
         for confirmation in (True, None, "approved", [True]):
@@ -136,7 +163,7 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
         self.assertTrue(approved["approved"])
         for field in ("preview", "preview_digest", "previewed_at", "run_id", "request_id"):
             self.assertEqual(approved[field], pending[field])
-        self.assertEqual(approved["receipt"], receipt)
+        self.assertEqual(approved["confirmation"], receipt)
 
     def test_signed_foreign_expired_pre_preview_and_nonhuman_receipts_are_rejected(self) -> None:
         state = self.state()
@@ -157,6 +184,8 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
             with self.subTest(mutation=mutation):
                 state = self.state()
                 state["approval_confirmation"] = self.receipt(state["pending_approval"])
+                if mutation == "missing_key":
+                    state["approval_confirmation"] = self.receipt(state["pending_approval"], action="foreign")
                 if mutation == "preview":
                     state["pending_approval"]["preview"]["story_revision"] = 8
                 elif mutation == "signature":
@@ -212,7 +241,8 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
                         raise ValueError("request builder failed")
                     options["request_builder"] = fail_builder
                 client = VerifyingClient()
-                with patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": ""} if failure == "issuer" else {}):
+                with patch("kwikledgers_langgraph.graphs.mutable_flow.issue_execution_capability",
+                           side_effect=RuntimeError("Issuer unavailable")) if failure == "issuer" else patch.dict(os.environ, {}):
                     result = self.execute(state, request, client, **options)
                 self.assertEqual(result["story_status_result"], {"status": "execute_failed", "changed": False})
                 self.assertTrue(result["errors"])
@@ -220,7 +250,7 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
 
     def test_execute_rechecks_receipt_even_with_approved_boolean(self) -> None:
         state = self.approved_state()
-        state["pending_approval"].pop("receipt")
+        state["pending_approval"].pop("confirmation")
         client = VerifyingClient()
         result = self.execute(state, {"story_id": 42, "target_status": "Aguardando PR",
                                       "preview": {"story_revision": 7}}, client)
@@ -325,7 +355,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                          ["get_story_details", "get_story_details", "update_work_item_effort"])
         self.assertNotIn("remaining_work_hours", client.executions[0][1])
 
-    def test_all_clis_resume_with_separate_signed_receipt_and_preserve_binding(self) -> None:
+    def test_all_clis_resume_with_explicit_request_and_configured_keys(self) -> None:
         client = VerifyingClient()
         for runtime, prefix, request, _capability, cli in self.cases(client):
             with self.subTest(flow=prefix), TemporaryDirectory() as directory:
@@ -335,17 +365,46 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                 write_state_file(preview, state_file)
                 receipt = self.receipt(preview["pending_approval"])
                 receipt_file.write_text(json.dumps(receipt), encoding="utf-8")
-                arguments = argparse.Namespace(resume_state_file=state_file, receipt=str(receipt_file),
-                                               approval_request_id=None, approval_source="human", backend=None)
+                arguments = argparse.Namespace(resume_state_file=state_file, receipt=None,
+                                               approval_request_id=preview["pending_approval"]["request_id"],
+                                               approval_source="human", backend=None)
                 resumed = cli._build_runtime_state(arguments)
                 self.assertEqual(resumed["pending_approval"], preview["pending_approval"])
-                self.assertEqual(resumed["approval_confirmation"], receipt)
+                self.assertTrue(ExplicitLocalApproval().verify(preview["pending_approval"], resumed["approval_confirmation"]))
                 self.assertFalse(resumed["pending_approval"]["approved"])
                 result = runtime.invoke(resumed)
                 self.assertTrue(result["pending_approval"]["approved"])
         self.assertEqual(len(client.executions), 4)
 
-    def test_all_clis_reject_boolean_missing_tampered_or_same_file_receipts(self) -> None:
+    def test_all_clis_accept_explicit_resume_without_keys_or_receipts(self) -> None:
+        client = VerifyingClient()
+        with patch.dict(os.environ, {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": "",
+                                     "KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "",
+                                     "KWIKLEDGERS_LANGGRAPH_STATE_SIGNING_KEY": ""}):
+            for runtime, prefix, request, _capability, cli in self.cases(client):
+                with self.subTest(flow=prefix), TemporaryDirectory() as directory:
+                    preview = runtime.invoke(self.initial(prefix, request))
+                    state_file = str(Path(directory) / "state.json")
+                    write_state_file(preview, state_file)
+                    arguments = argparse.Namespace(
+                        resume_state_file=state_file, receipt=None,
+                        approval_request_id=preview["pending_approval"]["request_id"],
+                        approval_source="human", backend=None,
+                    )
+                    resumed = cli._build_runtime_state(arguments)
+                    self.assertFalse(resumed["pending_approval"]["approved"])
+                    resumed["approval_resume_ready"] = True
+                    pending = resumed["pending_approval"]
+                    approved = evaluate_operation(resumed, action=pending["action"],
+                                                  operation_kind=OperationKind.AZURE_MUTATION,
+                                                  preview=pending["preview"])
+                    self.assertTrue(approved["pending_approval"]["approved"])
+                    arguments.approval_request_id = "foreign"
+                    with self.assertRaises(RuntimeError):
+                        cli._build_runtime_state(arguments)
+        self.assertEqual(client.executions, [])
+
+    def test_all_clis_reject_boolean_invalid_or_same_file_receipts(self) -> None:
         client = VerifyingClient()
         for runtime, prefix, request, _capability, cli in self.cases(client):
             with self.subTest(flow=prefix), TemporaryDirectory() as directory:
@@ -354,7 +413,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                 write_state_file(preview, state_file)
                 receipt_file = Path(directory) / "receipt.json"
                 receipt_file.write_text(json.dumps({"approved": True}), encoding="utf-8")
-                for receipt_path in (None, state_file, str(receipt_file), str(Path(directory) / "missing.json")):
+                for receipt_path in (state_file, str(receipt_file), str(Path(directory) / "missing.json")):
                     with self.subTest(receipt=receipt_path), self.assertRaises(RuntimeError):
                         cli._build_runtime_state(argparse.Namespace(
                             resume_state_file=state_file, receipt=receipt_path,

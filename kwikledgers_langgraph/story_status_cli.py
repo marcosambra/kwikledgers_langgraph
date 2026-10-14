@@ -118,11 +118,11 @@ def _validate_arguments(arguments: argparse.Namespace) -> None:
         if resolve_backend_name(getattr(arguments, "backend", None)) == "legacy":
             if not getattr(arguments, "approval_request_id", None):
                 raise StoryStatusCliError("Informe '--approval-request-id' para a retomada legada.")
-        elif not getattr(arguments, "receipt", None) and not getattr(arguments, "approval_request_id", None):
-            raise StoryStatusCliError("Informe '--receipt' ao usar '--resume-state-file' com FastMCP.")
+        elif not getattr(arguments, "receipt", None):
+            raise StoryStatusCliError("Informe '--receipt' com a aprovação assinada independente ao retomar.")
         return
-    if getattr(arguments, "receipt", None):
-        raise StoryStatusCliError("Use '--receipt' somente com '--resume-state-file'.")
+    if getattr(arguments, "receipt", None) or getattr(arguments, "approval_request_id", None):
+        raise StoryStatusCliError("Informe aprovação somente com '--resume-state-file', após a prévia.")
 
     missing_arguments = [
         option_name
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Executa o fluxo LangGraph de preview/transicao de status da story. "
             "Use o modo inicial para gerar o preview e salvar o estado; use "
-            "'--resume-state-file' com '--receipt' para retomar a transição real."
+            "'--resume-state-file' com '--approval-request-id' para confirmar a transição real."
         ),
     )
     parser.add_argument("--story-id", type=int, help="ID da story pai.")
@@ -189,14 +189,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Arquivo JSON do estado final salvo apos o preview para retomar a aprovacao real.",
     )
     parser.add_argument(
-        "--receipt",
-        default=None,
-        help="Arquivo JSON separado com recibo de aprovação humana assinado.",
-    )
-    parser.add_argument(
         "--approval-request-id",
         default=None,
-        help="Confirmação por request ID somente no backend 'legacy' explícito.",
+        help="ID da prévia salva que está sendo aprovada explicitamente nesta retomada.",
     )
     parser.add_argument(
         "--approval-source",

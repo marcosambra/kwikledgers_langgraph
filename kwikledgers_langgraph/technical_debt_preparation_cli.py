@@ -1,4 +1,4 @@
-"""Prepare a signed local debt cache, never create Azure work items.
+"""Prepare a durable local debt cache, never create Azure work items.
 
 Exit 0 means successful preparation (preview_only), not approved execution.
 Exit 1 means blocked preparation. No human approval key or receipt is needed.
@@ -8,15 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 from typing import Any
 
 from kwikledgers_langgraph.atomic_cli import load_json
-from kwikledgers_langgraph.fastmcp_execution_capability import (
-    EXECUTION_CAPABILITY_KEY_ENV_VAR, issue_runtime_execution_capability,
-)
+from kwikledgers_langgraph.fastmcp_execution_capability import issue_runtime_execution_capability
 from kwikledgers_langgraph.graphs.technical_debt_preparation import build_technical_debt_preparation_graph
 from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal, build_debt_preparation_ports
 from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_output
@@ -24,16 +21,16 @@ from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_outpu
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        description="Prepare a signed local technical-debt preview; never create Azure work items.",
+        description="Prepare a durable local technical-debt preview; never create Azure work items.",
         epilog="Success exits 0 with outcome preview_only. Use kwikledgers-langgraph-lifecycle "
                "technical_debt_execute --preview-key '<runid>:preview_cache' with the same "
-               "--checkpoint for a separate, receipt-approved execution.",
+               "--checkpoint for a separate, explicitly approved execution.",
     )
     result.add_argument("--operator-config", required=True, type=Path,
                         help="JSON repositories map, authorized iteration_paths list, and optional "
                              "task_acceptance_supported boolean; existing lifecycle settings are allowed.")
     result.add_argument("--arguments-file", required=True, type=Path)
-    result.add_argument("--checkpoint", required=True, type=Path, help="Shared signed lifecycle journal.")
+    result.add_argument("--checkpoint", required=True, type=Path, help="Shared unsigned local lifecycle journal.")
     return result
 
 
@@ -59,15 +56,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     journal = None
     try:
-        state_key = os.environ.get("KWIKLEDGERS_LIFECYCLE_STATE_KEY", "").encode()
-        if len(state_key) < 32:
-            raise ValueError("Lifecycle state key requires at least 32 bytes")
-        if not os.environ.get(EXECUTION_CAPABILITY_KEY_ENV_VAR, "").strip():
-            raise ValueError("Runtime execution key required for local tracking")
         operator = validate_operator(load_json(args.operator_config))
         arguments = load_json(args.arguments_file)
         with checkpoint_lock(args.checkpoint):
-            journal = LifecycleJournal(args.checkpoint, state_key)
+            journal = LifecycleJournal(args.checkpoint)
             ports = build_debt_preparation_ports(
                 **operator, journal=journal, runtime_issuer=issue_runtime_execution_capability,
             )
@@ -80,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Preparation requires a graph-generated active run")
                 preview_key = f"{run_id}:preview_cache"
                 if journal.get(preview_key) is None:
-                    raise ValueError("Signed prepared preview cache required")
+                    raise ValueError("Durable prepared preview cache required")
                 output["preview_key"] = preview_key
                 print(json.dumps(output, ensure_ascii=True, allow_nan=False))
                 return 0

@@ -1,4 +1,5 @@
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from io import StringIO
 import json
 from pathlib import Path
@@ -9,8 +10,10 @@ from unittest.mock import Mock, patch
 
 from kwikledgers_langgraph.atomic_cli import load_json, main, parser, run_atomic_cli
 from kwikledgers_langgraph.atomic_runtime import MUTATION_SCHEMAS, PREVIEW_SCHEMAS, READ_SCHEMAS
+from kwikledgers_langgraph.lifecycle_adapters import SignedReceiptApproval, LifecycleJournal
+from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 from test_atomic_runtime import AtomicRuntimeHarness, PAYLOADS
-from test_lifecycle_adapters import receipt_for
+from test_lifecycle_adapters import APPROVAL_KEY, approved_state, approval_binding, receipt_for
 
 
 class AtomicCLIContractTests(TestCase):
@@ -28,10 +31,12 @@ class AtomicCLIContractTests(TestCase):
                               arguments=self.payload, **kwargs)
 
     def interrupted(self):
-        self.graph.get_state.return_value = SimpleNamespace(values={
+        state = approved_state("atomic_send_notification", self.payload, {})
+        state["pending_approval"] = approval_binding(state["pending_approval"])
+        state.update({
             "context": {"atomic_capability": "send_notification", "atomic_arguments": self.payload},
-            "observability": {"flow_name": "atomic_send_notification"},
-            "pending_approval": {"action": "atomic_send_notification"}}, next=("atomic_send_notification_gate",))
+            "observability": {"flow_name": "atomic_send_notification", "active_run_id": state["run_id"]}})
+        self.graph.get_state.return_value = SimpleNamespace(values=state, next=("atomic_send_notification_gate",))
 
     def test_parser_exposes_every_read_and_preview(self):
         for name in (*READ_SCHEMAS, *PREVIEW_SCHEMAS):
@@ -60,6 +65,18 @@ class AtomicCLIContractTests(TestCase):
         with self.assertRaises(ValueError):
             self.invoke(receipt={"claims": {}})
         self.graph.invoke.assert_not_called()
+
+    def test_initial_invocation_cannot_include_explicit_approval(self):
+        with self.assertRaises(ValueError):
+            self.invoke(approval_request_id="request")
+        self.graph.invoke.assert_not_called()
+
+    def test_parser_accepts_receipt_with_optional_matching_request_id(self):
+        base = ["mutation", "send_notification", "--operator-config", "operator.json",
+                "--checkpoint", "state.db", "--thread-id", "thread", "--resume",
+                "--approval-request-id", "request"]
+        self.assertEqual(parser().parse_args(base).approval_request_id, "request")
+        self.assertEqual(parser().parse_args(base + ["--receipt", "receipt.json"]).receipt, Path("receipt.json"))
 
     def test_existing_thread_cannot_be_reset(self):
         self.interrupted()
@@ -96,10 +113,17 @@ class AtomicCLIContractTests(TestCase):
                     self.invoke(resume=True, receipt={})
         self.graph.invoke.assert_not_called()
 
-    def test_resume_passes_receipt_to_command_unchanged(self):
+    def test_resume_requires_signed_envelope_before_invoking_graph(self):
         self.interrupted()
-        receipt = {"claims": {"subject": "human"}, "signature": "external"}
-        self.invoke(resume=True, receipt=receipt)
+        with self.assertRaises(ValueError):
+            self.invoke(resume=True, receipt={"subject": "human"})
+        self.graph.invoke.assert_not_called()
+        pending = self.graph.get_state.return_value.values["pending_approval"]
+        with self.assertRaises(ValueError):
+            self.invoke(resume=True, approval_request_id=pending["request_id"])
+        self.graph.invoke.assert_not_called()
+        receipt = receipt_for(pending)
+        self.invoke(resume=True, receipt=receipt, approval_request_id=pending["request_id"])
         self.assertEqual(self.graph.invoke.call_args.args[0].resume, receipt)
 
     def test_output_preserves_reconciliation_evidence(self):
@@ -128,6 +152,7 @@ class AtomicCLIContractTests(TestCase):
                     patch("kwikledgers_langgraph.atomic_cli.load_json", return_value={
                         "repositories": {}, "project": "KL", "area": "Squad"}), \
                     patch("kwikledgers_langgraph.atomic_cli.validate_arguments", return_value=self.payload), \
+                    patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": APPROVAL_KEY.decode()}), \
                     patch("kwikledgers_langgraph.atomic_cli.SignedReceiptApproval"), \
                     patch("kwikledgers_langgraph.atomic_cli.LifecycleJournal"), \
                     patch("kwikledgers_langgraph.atomic_cli.SignedLifecycleCheckpointer", return_value=checkpoint), \
@@ -180,6 +205,85 @@ class AtomicCLIContractTests(TestCase):
 
 
 class AtomicCLIIntegrationTests(AtomicRuntimeHarness, TestCase):
+    def test_catalog_mutations_require_signed_receipt_with_no_key_checkpoint(self):
+        self.journal.close()
+        self.journal = LifecycleJournal(self.path)
+        self.gateway.journal = self.journal
+        self.ports = replace(self.ports, approvals=SignedReceiptApproval(APPROVAL_KEY, clock=lambda: self.now))
+        self.checkpoint = SignedLifecycleCheckpointer(self.journal)
+        for name in MUTATION_SCHEMAS:
+            with self.subTest(name=name):
+                graph = self.graph(name)
+                thread_id = self.id() + ":" + name
+                first = run_atomic_cli(graph, name=name, thread_id=thread_id, arguments=PAYLOADS[name])
+                count = len(self.client.effects)
+                request_id = first["pending_approval"]["request_id"]
+                receipt = receipt_for(first["pending_approval"], issued=self.now)
+                with self.assertRaises(ValueError):
+                    run_atomic_cli(graph, name=name, thread_id=thread_id, arguments=PAYLOADS[name],
+                                   resume=True, receipt=receipt, approval_request_id="foreign")
+                self.assertEqual(len(self.client.effects), count)
+                with self.assertRaises(ValueError):
+                    run_atomic_cli(graph, name=name, thread_id=thread_id, arguments=PAYLOADS[name],
+                                   resume=True, approval_request_id=request_id)
+                self.assertEqual(len(self.client.effects), count)
+                result = run_atomic_cli(graph, name=name, thread_id=thread_id, arguments=PAYLOADS[name],
+                                        resume=True, receipt=receipt, approval_request_id=request_id)
+                self.assertEqual(result["outcome"], "completed")
+                self.assertEqual(len(self.client.effects), count + 1)
+                with self.assertRaises(ValueError):
+                    run_atomic_cli(graph, name=name, thread_id=thread_id, arguments=PAYLOADS[name],
+                                   resume=True, receipt=receipt, approval_request_id=request_id)
+                self.assertEqual(len(self.client.effects), count + 1)
+
+    def test_main_reopens_no_key_checkpoint_only_with_signed_receipt(self):
+        operator = Path(self.directory.name) / "operator.json"
+        arguments = Path(self.directory.name) / "arguments.json"
+        receipt_path = Path(self.directory.name) / "receipt.json"
+        operator.write_text(json.dumps({"repositories": {"payment": self.directory.name},
+                                       "project": "KL", "area": "Squad"}), encoding="utf-8")
+        arguments.write_text(json.dumps(PAYLOADS["send_notification"]), encoding="utf-8")
+        base = ["mutation", "send_notification", "--operator-config", str(operator),
+                "--checkpoint", str(self.path), "--thread-id", self.id()]
+        self.journal.close()
+
+        def ports_for(**kwargs):
+            self.journal = kwargs["journal"]
+            self.gateway.journal = self.journal
+            return replace(self.ports, approvals=kwargs["approvals"])
+
+        for key in ("", "a" * 31):
+            with self.subTest(key=key), patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": key}, clear=True), \
+                    patch("kwikledgers_langgraph.atomic_cli.lifecycle_issuers", return_value=(self.issue, Mock())), \
+                    patch("kwikledgers_langgraph.atomic_cli.build_lifecycle_ports") as ports, \
+                    redirect_stderr(StringIO()):
+                self.assertEqual(main(base + ["--arguments-file", str(arguments)]), 1)
+                ports.assert_not_called()
+                self.assertEqual(self.client.effects, [])
+
+        with patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": APPROVAL_KEY.decode()}, clear=True), \
+                patch("kwikledgers_langgraph.atomic_cli.lifecycle_issuers", return_value=(self.issue, Mock())), \
+            patch("kwikledgers_langgraph.atomic_cli.SignedReceiptApproval", return_value=self.approvals), \
+                patch("kwikledgers_langgraph.atomic_cli.build_lifecycle_ports", side_effect=ports_for):
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(base + ["--arguments-file", str(arguments)]), 2)
+            first = json.loads(output.getvalue())
+            self.assertEqual(self.client.effects, [])
+            resumed = StringIO()
+            suffix = ["--resume", "--approval-request-id", first["pending_approval"]["request_id"]]
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                main(base + suffix)
+            self.assertEqual(self.client.effects, [])
+            receipt_path.write_text(json.dumps(receipt_for(first["pending_approval"])), encoding="utf-8")
+            suffix += ["--receipt", str(receipt_path)]
+            with redirect_stdout(resumed):
+                self.assertEqual(main(base + suffix), 0)
+            self.assertEqual(json.loads(resumed.getvalue())["run_id"], first["run_id"])
+            with redirect_stderr(StringIO()):
+                self.assertEqual(main(base + suffix), 1)
+        self.assertEqual(len(self.client.effects), 1)
+
     def test_cli_preview_and_resume_with_external_receipt(self):
         graph = self.graph("send_notification")
         first = run_atomic_cli(graph, name="send_notification", thread_id=self.id(), arguments=PAYLOADS["send_notification"])
@@ -221,10 +325,12 @@ class AtomicCLIIntegrationTests(AtomicRuntimeHarness, TestCase):
             receipt_path.write_text(json.dumps(receipt_for(first["pending_approval"])), encoding="utf-8")
             resumed = StringIO()
             with redirect_stdout(resumed):
-                self.assertEqual(main(base + ["--resume", "--receipt", str(receipt_path)]), 0)
+                self.assertEqual(main(base + ["--resume", "--receipt", str(receipt_path),
+                                              "--approval-request-id", first["pending_approval"]["request_id"]]), 0)
             final = json.loads(resumed.getvalue())
             self.assertEqual(final["outcome"], "completed")
             self.assertEqual(final["run_id"], first["run_id"])
             with redirect_stderr(StringIO()):
-                self.assertEqual(main(base + ["--resume", "--receipt", str(receipt_path)]), 1)
+                self.assertEqual(main(base + ["--resume", "--receipt", str(receipt_path),
+                                              "--approval-request-id", first["pending_approval"]["request_id"]]), 1)
         self.assertEqual(len(self.client.effects), 1)

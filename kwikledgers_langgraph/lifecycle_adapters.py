@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import subprocess
 from threading import RLock
 from typing import Any, Callable, Iterator, Mapping
@@ -51,10 +53,18 @@ def lifecycle_scope(state: dict[str, Any], approvals: Any = None) -> Iterator[No
         if (pending.get("approved") is not True or binding["run_id"] != run_id
                 or binding["preview_digest"] != digest
                 or approvals.verify(binding, pending.get("receipt")) is not True):
-            raise ValueError("Authenticated lifecycle receipt required")
+            raise ValueError("Verified independent signed lifecycle receipt required")
         trusted["verified_lifecycle_binding"] = binding
+        receipt = pending["receipt"]
+        information = receipt.get("claims", {}) if isinstance(receipt, dict) else {}
+        trusted["verified_lifecycle_approval"] = {
+            "method": "signed_receipt",
+            "decision": information.get("decision"), "subject": information.get("subject"),
+            "confirmed_at": information.get("issued_at"),
+        }
     else:
         trusted.pop("verified_lifecycle_binding", None)
+        trusted.pop("verified_lifecycle_approval", None)
     token = _ACTIVE.set(trusted)
     approval_token = _APPROVALS.set(approvals)
     try:
@@ -140,8 +150,8 @@ def validate_lifecycle_execution(state: dict[str, Any], *, action: str,
 
 class SignedReceiptApproval:
     def __init__(self, key: bytes, *, clock: Callable[[], datetime] | None = None) -> None:
-        if len(key) < 32:
-            raise ValueError("Approval verification key must contain at least 32 bytes")
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise ValueError("An independent approval key of at least 32 bytes is required")
         self.key = key
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -156,33 +166,82 @@ class SignedReceiptApproval:
             expected = hmac.new(self.key, canonical(claims).encode(), "sha256").hexdigest()
             if not hmac.compare_digest(expected, confirmation["signature"]):
                 return False
-            if any(claims.get(field) != pending[field] for field in
-                   ("action", "run_id", "request_id", "preview_digest")):
+            if any(claims.get(field) != pending[field] for field in ("action", "run_id", "request_id", "preview_digest")):
                 return False
             created = datetime.fromisoformat(claims["issued_at"])
             expires = datetime.fromisoformat(claims["expires_at"])
             previewed = datetime.fromisoformat(pending["previewed_at"])
             now = self.clock()
-            return (created.tzinfo is not None and expires.tzinfo is not None and previewed.tzinfo is not None
+            return (all(value.utcoffset() is not None for value in (created, expires, previewed, now))
                     and previewed <= created <= now < expires and (expires - created).total_seconds() <= 600)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+
+
+class ExplicitLocalApproval:
+    def __init__(self, key: bytes | None = None, *, clock: Callable[[], datetime] | None = None) -> None:
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def confirm(self, pending: dict[str, Any], request_id: str, *, subject: str = "local-operator") -> dict[str, Any]:
+        if (pending.get("approved") is not False or not isinstance(request_id, str)
+                or not request_id.strip() or pending.get("request_id") != request_id):
+            raise ValueError("Explicit approval must target the current unapproved request")
+        confirmation = {**approval_binding(pending), "decision": "approve", "source": "human",
+                        "subject": subject, "confirmed_at": self.clock().isoformat()}
+        if not self.verify(pending, confirmation):
+            raise ValueError("Explicit approval binding invalid")
+        return confirmation
+
+    def verify(self, pending: dict[str, Any], confirmation: Any) -> bool:
+        if isinstance(confirmation, dict) and any(field in confirmation for field in ("claims", "signature", "receipt")):
+            return False
+        try:
+            if (not isinstance(confirmation, dict) or confirmation.get("decision") != "approve"
+                    or confirmation.get("source") != "human" or confirmation.get("approved") is not False
+                    or not isinstance(confirmation.get("subject"), str) or not confirmation["subject"].strip()):
+                return False
+            binding = approval_binding(pending)
+            if any(not isinstance(binding[field], str) or not binding[field].strip()
+                   for field in ("action", "run_id", "request_id", "preview_digest")):
+                return False
+            digest = sha256(json.dumps(binding["preview"], sort_keys=True, allow_nan=False).encode()).hexdigest()
+            if binding["preview_digest"] != digest or canonical(approval_binding(confirmation)) != canonical(binding):
+                return False
+            previewed = datetime.fromisoformat(binding["previewed_at"])
+            confirmed = datetime.fromisoformat(confirmation["confirmed_at"])
+            now = self.clock()
+            return (previewed.tzinfo is not None and confirmed.tzinfo is not None and now.tzinfo is not None
+                    and previewed <= confirmed <= now)
+        except (KeyError, TypeError, ValueError, OverflowError):
             return False
 
 
 class LifecycleJournal:
-    def __init__(self, path: str | Path, key: bytes) -> None:
-        if len(key) < 32:
-            raise ValueError("Evidence key must contain at least 32 bytes")
-        self.key = key
+    def __init__(self, path: str | Path, key: bytes | None = None) -> None:
+        self.key = None
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        parent = self.path.parent.stat()
+        if parent.st_uid != os.getuid() or parent.st_mode & 0o022:
+            raise ValueError("Lifecycle journal requires an owner-controlled local directory")
+        handle = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            metadata = os.fstat(handle)
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                    or metadata.st_mode & 0o022):
+                raise ValueError("Lifecycle journal requires an owner-controlled local file")
+            os.fchmod(handle, 0o600)
+        finally:
+            os.close(handle)
         self.lock = RLock()
         self.db = sqlite3.connect(str(self.path), check_same_thread=False)
+        self.db.execute("PRAGMA synchronous = FULL")
         self.db.execute("CREATE TABLE IF NOT EXISTS lifecycle_evidence (key TEXT PRIMARY KEY, payload TEXT NOT NULL, signature TEXT NOT NULL)")
         self.db.commit()
 
     def _signature(self, key: str, payload: str) -> str:
-        return hmac.new(self.key, (key + "\n" + payload).encode(), "sha256").hexdigest()
+        data = (key + "\n" + payload).encode()
+        return "sha256:" + sha256(data).hexdigest()
 
     def get(self, key: str) -> dict[str, Any] | None:
         with self.lock:
@@ -192,8 +251,8 @@ class LifecycleJournal:
         row = self.db.execute("SELECT payload, signature FROM lifecycle_evidence WHERE key = ?", (key,)).fetchone()
         if row is None:
             return None
-        if not hmac.compare_digest(row[1], self._signature(key, row[0])):
-            raise ValueError("Lifecycle evidence signature invalid")
+        if row[1] != self._signature(key, row[0]):
+            raise ValueError("Evidência antiga ou corrompida. Gere uma nova prévia.")
         return json.loads(row[0])
 
     def put(self, key: str, value: dict[str, Any]) -> None:
@@ -273,6 +332,7 @@ class LifecycleGateway:
             raise ValueError("Internal lifecycle capability is not allowed")
         state = active_state()
         state.pop("verified_lifecycle_binding", None)
+        state.pop("verified_lifecycle_approval", None)
         state.pop("pending_approval", None)
         state.pop("approval_confirmation", None)
         arguments = deepcopy(arguments)

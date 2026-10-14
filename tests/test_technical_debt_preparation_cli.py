@@ -170,16 +170,24 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.assertEqual(code, 0)
         self.assertIn("acceptance_criteria", output["results"]["technical_debt_preview"]["children"][0])
 
-    def test_keys_fail_closed_before_clients_or_journal_creation(self):
-        for name, value in (("KWIKLEDGERS_LIFECYCLE_STATE_KEY", "s" * 31),
-                            ("KWIKLEDGERS_LIFECYCLE_STATE_KEY", ""),
-                            ("KWIKLEDGERS_FASTMCP_EXECUTION_KEY", " ")):
+    def test_malformed_optional_state_key_fails_before_clients_or_journal_creation(self):
+        for name, value in (("KWIKLEDGERS_LIFECYCLE_STATE_KEY", "s" * 31),):
             with self.subTest(name=name, value=value), patch.dict("os.environ", {name: value}):
                 code, output = self.invoke()
                 self.assertEqual((code, output["outcome"]), (1, "blocked"))
                 self.assertFalse(self.checkpoint.exists())
         self.assertEqual(self.client.calls, [])
         self.issuer.assert_not_called()
+
+    def test_preparation_without_configured_keys_uses_the_runtime_issuer_contract(self):
+        self.issuer.side_effect = lambda *args, **kwargs: "local-runtime-capability"
+        with patch.dict("os.environ", {}, clear=True):
+            code, output = self.invoke()
+        self.assertEqual((code, output["outcome"]), (0, "preview_only"))
+        journal = LifecycleJournal(self.checkpoint)
+        self.addCleanup(journal.close)
+        self.assertEqual(journal.get(output["preview_key"])["repository"], "kl_store")
+        self.issuer.assert_called_once()
 
     def test_unauthorized_repository_iteration_and_next_sprint_fail_before_native_reads(self):
         for changes in ({"repository_name": "other"}, {"iteration_path": "Other"},

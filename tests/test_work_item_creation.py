@@ -216,7 +216,8 @@ class WorkItemCreationTests(CreationHarness, TestCase):
             state, now=NOW, **arguments,
         )
         graph, config, first = self.preview()
-        with patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "fixture-execution-key"}):
+        with patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "fixture-execution-key",
+                       "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.path.parent / "capabilities.db")}):
             self.assertEqual(self.approve(graph, config, first)["outcome"], "completed")
         effect = dict(self.effects[0])
         self.assertIn(".", effect.pop("execution_capability"))

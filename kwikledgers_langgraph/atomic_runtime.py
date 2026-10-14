@@ -30,6 +30,7 @@ READ_SCHEMAS = {
     "get_sprint_stories": AtomicSchema(),
     "get_sprint_stories_detailed": AtomicSchema(),
     "get_story_details": AtomicSchema(("story_id",)),
+    "get_sprint_work_report": AtomicSchema((), ("sprint_path", "email")),
     "get_open_prs": AtomicSchema(("email",)),
     "find_similar_technical_debts": AtomicSchema(("repository_name", "title"), ("description", "limit")),
     "read_tracking_snapshot": AtomicSchema(),
@@ -84,7 +85,7 @@ TEXT_FIELDS = frozenset({
     "important_points", "mermaid_diagram", "new_library_name", "env_changes",
     "generated_migration_or_seed", "new_queue_or_command", "start", "end", "remind_at",
     "message", "urgency", "summary", "entry_title", "target_iteration_path",
-    "implementation_status", "implementation_notes",
+    "implementation_status", "implementation_notes", "sprint_path",
 })
 BOOLEAN_FIELDS = frozenset({"include_child_work_items", "tests_updated", "tests_unchanged"})
 INTEGER_FIELDS = frozenset({"story_id", "work_item_id", "days", "limit", "reminder_minutes", "blocked_items"})

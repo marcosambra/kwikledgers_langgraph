@@ -14,15 +14,15 @@ from kwikledgers_langgraph.atomic_runtime import (
     read_capability, validate_arguments,
 )
 from kwikledgers_langgraph.fastmcp_client import FastMCPClient
-from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal, SignedReceiptApproval, build_lifecycle_ports
+from kwikledgers_langgraph.lifecycle_adapters import SignedReceiptApproval, LifecycleJournal, build_lifecycle_ports
 from kwikledgers_langgraph.lifecycle_cli import (
-    checkpoint_lock, lifecycle_exit_code, lifecycle_issuers, lifecycle_output,
+    checkpoint_lock, lifecycle_confirmation, lifecycle_exit_code, lifecycle_issuers, lifecycle_output, load_receipt,
 )
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description="Operational reads and receipt-approved atomic lifecycles.")
+    result = argparse.ArgumentParser(description="Operational reads and explicitly approved atomic lifecycles.")
     commands = result.add_subparsers(dest="command", required=True)
     read = commands.add_parser("read")
     read.add_argument("name", choices=tuple(READ_SCHEMAS) + tuple(PREVIEW_SCHEMAS))
@@ -34,7 +34,8 @@ def parser() -> argparse.ArgumentParser:
     mutation.add_argument("--checkpoint", required=True, type=Path)
     mutation.add_argument("--thread-id", required=True)
     mutation.add_argument("--resume", action="store_true")
-    mutation.add_argument("--receipt", type=Path)
+    mutation.add_argument("--receipt", type=Path, help="Independent signed approval receipt for the current preview.")
+    mutation.add_argument("--approval-request-id", help="Optional request ID matching the signed receipt.")
     return result
 
 
@@ -59,7 +60,8 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def run_atomic_cli(graph: Any, *, name: str, thread_id: str,
-                   arguments: dict[str, Any], resume: bool = False, receipt: Any = None) -> dict[str, Any]:
+                   arguments: dict[str, Any], resume: bool = False, receipt: Any = None,
+                   approval_request_id: str | None = None) -> dict[str, Any]:
     if not isinstance(thread_id, str) or not thread_id.strip():
         raise ValueError("Nonempty atomic thread required")
     payload = validate_arguments(name, arguments)
@@ -77,11 +79,10 @@ def run_atomic_cli(graph: Any, *, name: str, thread_id: str,
                 or context.get("atomic_arguments") != payload
                 or pending.get("action") != action):
             raise ValueError("Resume cannot change atomic capability, arguments or flow")
-        if receipt is None:
-            raise ValueError("Resume requires a separate external signed receipt")
-        result = graph.invoke(Command(resume=receipt), config)
+        confirmation = lifecycle_confirmation(state, receipt=receipt, approval_request_id=approval_request_id)
+        result = graph.invoke(Command(resume=confirmation), config)
     else:
-        if receipt is not None:
+        if receipt is not None or approval_request_id is not None:
             raise ValueError("Approval cannot be supplied in the preview invocation")
         if saved.values:
             raise ValueError("Thread already exists; resume without resetting evidence")
@@ -93,9 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     arguments_parser = parser()
     args = arguments_parser.parse_args(argv)
     if args.command == "mutation":
-        if args.receipt and not args.resume:
-            arguments_parser.error("--receipt requires a separate --resume invocation")
-        if args.resume and not args.receipt:
+        if (args.receipt is not None or args.approval_request_id is not None) and not args.resume:
+            arguments_parser.error("Approval requires a separate --resume invocation")
+        if args.resume and args.receipt is None:
             arguments_parser.error("--resume requires --receipt")
         if not args.resume and not args.arguments_file:
             arguments_parser.error("preview requires --arguments-file")
@@ -109,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         operator = load_json(args.operator_config)
         approvals = SignedReceiptApproval(os.environ.get("KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY", "").encode())
         with checkpoint_lock(args.checkpoint):
-            journal = LifecycleJournal(args.checkpoint, os.environ.get("KWIKLEDGERS_LIFECYCLE_STATE_KEY", "").encode())
+            journal = LifecycleJournal(args.checkpoint)
             checkpoint = SignedLifecycleCheckpointer(journal)
             config = {"configurable": {"thread_id": args.thread_id}}
             previous = checkpoint.get(config)
@@ -128,9 +129,10 @@ def main(argv: list[str] | None = None) -> int:
                 approvals=approvals, execution_issuer=execution_issuer, runtime_issuer=runtime_issuer,
             )
             graph = build_atomic_runtime(args.name, ports, checkpointer=checkpoint, arguments=payload)
-            receipt = load_json(args.receipt) if args.receipt else None
             output = run_atomic_cli(graph, name=args.name, thread_id=args.thread_id,
-                                    arguments=payload, resume=args.resume, receipt=receipt)
+                                    arguments=payload, resume=args.resume,
+                                    receipt=load_receipt(args.receipt, args.checkpoint),
+                                    approval_request_id=args.approval_request_id)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)
     except Exception:

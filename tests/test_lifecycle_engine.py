@@ -7,6 +7,7 @@ from langgraph.types import Command
 from kwikledgers_langgraph.adapters import LifecyclePorts
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
 from kwikledgers_langgraph.lifecycle_cli import lifecycle_exit_code, run_cli
+from test_lifecycle_adapters import receipt_for
 
 
 class LifecycleEngineTests(TestCase):
@@ -145,7 +146,8 @@ class LifecycleEngineTests(TestCase):
         self.assertEqual(first["outcome"], "waiting")
         self.assertEqual(lifecycle_exit_code(first), 2)
         self.approvals.verify.return_value = True
-        result = run_cli(self.graph, thread_id=self.id(), resume=True, receipt="receipt")
+        result = run_cli(self.graph, thread_id=self.id(), resume=True,
+                 receipt=receipt_for(first["pending_approval"]))
         self.assertEqual(result["results"], {"mutation": {"ok": True}})
         self.assertEqual(lifecycle_exit_code(result), 0)
         with self.assertRaises(ValueError):
@@ -160,15 +162,17 @@ class LifecycleEngineTests(TestCase):
                 self.assertEqual(lifecycle_exit_code({"outcome": outcome}), expected)
 
     def test_cli_unknown_execution_is_terminal_without_retry(self):
-        run_cli(self.graph, thread_id=self.id())
+        first = run_cli(self.graph, thread_id=self.id())
         self.approvals.verify.return_value = True
         self.execute.side_effect = TimeoutError("secret-token")
-        result = run_cli(self.graph, thread_id=self.id(), resume=True, receipt="receipt")
+        result = run_cli(self.graph, thread_id=self.id(), resume=True,
+                 receipt=receipt_for(first["pending_approval"]))
         self.assertEqual(result["outcome"], "reconciliation_required")
         self.assertEqual(result["outcome_reason"], "execution_outcome_unknown")
         self.assertEqual(lifecycle_exit_code(result), 3)
         with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id=self.id(), resume=True, receipt="receipt")
+                run_cli(self.graph, thread_id=self.id(), resume=True,
+                    approval_request_id=first["pending_approval"]["request_id"])
         self.execute.assert_called_once()
 
     def test_requires_checkpointer(self):

@@ -4,7 +4,6 @@ import base64
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
@@ -25,9 +24,9 @@ from kwikledgers_langgraph.lifecycle_adapters import (
     SignedReceiptApproval,
     active_state,
     approval_binding,
-    canonical,
     lifecycle_scope,
 )
+from test_lifecycle_adapters import receipt_for
 
 
 class AuthorizationFixture:
@@ -37,10 +36,14 @@ class AuthorizationFixture:
         self.approval_key = secrets.token_bytes(32)
         self.execution_key = secrets.token_hex(32)
         self.approvals = SignedReceiptApproval(self.approval_key, clock=lambda: self.now)
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.ledger = Path(temporary.name) / "capabilities.sqlite3"
         self.arguments = {"work_item_id": 11, "assigned_to": "fixture-human", "area_path": "Project",
                   "status": "Active", "expected_revision": 2}
         self.environment = patch.dict(
-            os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": self.execution_key},
+            os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": self.execution_key,
+                         "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.ledger)},
         )
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -60,16 +63,7 @@ class AuthorizationFixture:
             "request_id": request_id,
             "approved": True,
         }
-        claims = {field: pending[field] for field in ("action", "run_id", "request_id", "preview_digest")}
-        claims.update({
-            "decision": "approve", "subject": "fixture-human",
-            "issued_at": (self.now - timedelta(seconds=1)).isoformat(),
-            "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
-        })
-        pending["receipt"] = {
-            "claims": claims,
-            "signature": hmac.new(self.approval_key, canonical(claims).encode(), "sha256").hexdigest(),
-        }
+        pending["receipt"] = receipt_for(pending, issued=self.now - timedelta(seconds=1), key=self.approval_key)
         return {
             "run_id": run_id, "observability": {"active_run_id": run_id},
             "context": {"repository": "fixture-repository"}, "pending_approval": pending,
@@ -92,8 +86,7 @@ class AuthorizationFixture:
     def sign_execution_payload(self, payload: dict) -> str:
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         encoded = base64.urlsafe_b64encode(serialized).decode().rstrip("=")
-        signature = hmac.new(self.execution_key.encode(), serialized, "sha256").hexdigest()
-        return f"{encoded}.{signature}"
+        return f"{encoded}.local-v1"
 
 
 class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase):
@@ -201,9 +194,8 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
                 elif mutation == "signature":
                     receipt["signature"] = "0" * 64
                 elif mutation == "independent_key":
-                    receipt["signature"] = hmac.new(
-                        self.execution_key.encode(), canonical(receipt["claims"]).encode(), "sha256",
-                    ).hexdigest()
+                    pending["receipt"] = receipt_for(pending, issued=self.now - timedelta(seconds=1),
+                                                     key=b"b" * 32)
                 else:
                     pending["action"] = "close"
                 with self.assertRaises(ValueError):
@@ -238,6 +230,9 @@ class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCa
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.ledger = Path(temporary.name) / "execution-capabilities.sqlite3"
+        environment = patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.ledger)})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.fastmcp_root = Path(__file__).resolve().parents[2] / "kwikledgers_fastmcp"
         self.python = self.fastmcp_root / ".venv/bin/python"
         self.verifier_source = self.fastmcp_root / "src/kwikledgers_fastmcp/shared/execution_capability.py"
@@ -245,6 +240,23 @@ class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCa
             self.skipTest("Separate FastMCP .venv/bin/python is required")
         self.assertGreaterEqual(sys.version_info[:2], (3, 12), "LangGraph requires Python 3.12 or newer")
         self.assertTrue(self.verifier_source.is_file())
+
+    def issue_local(self, *, without_receipt: bool = False) -> str:
+        self.execution_key = ""
+        with patch.dict(os.environ, {
+            "KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "",
+            "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.ledger),
+        }):
+            if not without_receipt:
+                return self.issue()
+            trusted = self.approved_state()
+            trusted["pending_approval"].pop("receipt")
+            trusted["verified_lifecycle_binding"] = approval_binding(trusted["pending_approval"])
+            with patch("kwikledgers_langgraph.lifecycle_adapters.active_state", return_value=deepcopy(trusted)):
+                return issue_lifecycle_execution_capability(
+                    trusted, action="activate", capability_name="update_work_item_content", arguments=self.arguments,
+                    now=self.now,
+                )
 
     def verify(
         self, token: str, *, arguments: dict | None = None,
@@ -304,7 +316,7 @@ print(json.dumps({"accepted": True, "source": str(source)}))
     def test_validation_only_does_not_consume_authorization(self) -> None:
         token = self.issue()
         self.verify(token, consume=False)
-        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.ledger.exists())
         self.verify(token)
         self.verify(token, rejected="consumida")
 
@@ -312,7 +324,7 @@ print(json.dumps({"accepted": True, "source": str(source)}))
         token = self.issue()
         self.verify(token, arguments={**self.arguments, "work_item_id": 12}, rejected="payload")
         self.verify(token, capability="update_work_item_effort", rejected="operação")
-        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.ledger.exists())
         self.verify(token)
 
     def test_expired_issuance_and_future_issuance_are_rejected(self) -> None:
@@ -325,23 +337,22 @@ print(json.dumps({"accepted": True, "source": str(source)}))
                 payload["issued_at"] = issued.isoformat()
                 payload["expires_at"] = (issued + timedelta(minutes=5)).isoformat()
                 self.verify(self.sign_execution_payload(payload), rejected=rejection)
-        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.ledger.exists())
 
     def test_tampered_signature_is_rejected_without_consuming(self) -> None:
         token = self.issue()
         replacement = "0" if token[-1] != "0" else "1"
-        self.verify(token[:-1] + replacement, rejected="assinatura")
-        self.assertFalse(self.ledger.exists())
+        self.verify(token[:-1] + replacement, rejected="inválida")
+        self.assertTrue(self.ledger.exists())
         self.verify(token)
 
     def test_distinct_signed_tokens_with_repeated_nonce_are_rejected(self) -> None:
         with patch("kwikledgers_langgraph.fastmcp_execution_capability.uuid4", return_value=UUID(int=1)):
             first = self.issue(now=self.now - timedelta(seconds=1))
-            second = self.issue(now=self.now)
-        self.assertNotEqual(first, second)
-        self.assertEqual(self.decode(first)["nonce"], self.decode(second)["nonce"])
+            with self.assertRaises(ExecutionCapabilityError):
+                self.issue(now=self.now)
         self.verify(first)
-        self.verify(second, rejected="consumida")
+        self.verify(first, rejected="consumida")
 
     def test_genuinely_signed_tokens_missing_ids_or_timezone_are_rejected(self) -> None:
         token = self.issue()
@@ -359,5 +370,41 @@ print(json.dumps({"accepted": True, "source": str(source)}))
                 payload = self.decode(token)
                 payload[field] = datetime.fromisoformat(payload[field]).replace(tzinfo=None).isoformat()
                 self.verify(self.sign_execution_payload(payload), rejected="fuso")
-        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.ledger.exists())
         self.verify(token)
+
+    def test_local_token_is_interoperable_and_replay_is_blocked_across_processes(self) -> None:
+        token = self.issue_local()
+        self.assertTrue(token.endswith(".local-v1"))
+        self.verify(token)
+        self.verify(token, rejected="consumida")
+
+    def test_local_receiptless_verified_state_cannot_issue_token(self) -> None:
+        with self.assertRaises(ExecutionCapabilityError):
+            self.issue_local(without_receipt=True)
+        self.assertFalse(self.ledger.exists())
+
+    def test_local_payload_operation_and_revision_changes_are_rejected_before_consumption(self) -> None:
+        token = self.issue_local()
+        self.verify(token, arguments={**self.arguments, "work_item_id": 12}, rejected="payload")
+        self.verify(token, arguments={**self.arguments, "expected_revision": 3}, rejected="payload")
+        self.verify(token, capability="update_work_item_effort", rejected="operação")
+        self.verify(token)
+
+    def test_local_metadata_and_nonce_rewrites_cannot_bypass_the_shared_registry(self) -> None:
+        token = self.issue_local()
+        payload = self.decode(token)
+        self.verify(token)
+        for field, value in (("run_id", "foreign-run"), ("request_id", "foreign-request"),
+                             ("nonce", "0" * 32), ("action", "close")):
+            serialized = json.dumps({**payload, field: value}, ensure_ascii=False,
+                                    sort_keys=True, separators=(",", ":")).encode()
+            changed = base64.urlsafe_b64encode(serialized).decode().rstrip("=") + ".local-v1"
+            with self.subTest(field=field):
+                self.verify(changed, rejected="registro")
+
+    def test_local_token_cannot_be_verified_without_the_issuance_ledger(self) -> None:
+        token = self.issue_local()
+        self.ledger = self.ledger.parent / "another-ledger.sqlite3"
+        self.verify(token, rejected="com segurança")
+        self.assertFalse(self.ledger.exists())

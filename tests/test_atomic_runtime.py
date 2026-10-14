@@ -124,9 +124,10 @@ class AtomicRuntimeHarness:
 
 
 class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
-    def test_catalog_covers_all_thirty_capabilities(self):
+    def test_catalog_covers_all_capabilities(self):
         expected = {"get_active_user", "get_my_work_items", "get_my_blocked_items", "get_my_daily_summary",
             "get_user_stories", "get_sprint_stories", "get_sprint_stories_detailed", "get_story_details", "get_open_prs",
+            "get_sprint_work_report",
             "preview_story_branch_association", "preview_story_pull_request", "associate_story_branch",
             "create_story_pull_request", "create_work_item", "find_similar_technical_debts",
             "save_technical_debt_preview_cache", "update_work_item_content", "update_work_item_effort",
@@ -134,7 +135,7 @@ class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
             "update_task_control", "append_daily_action_log", "record_ai_metrics", "read_tracking_snapshot",
             "send_notification", "create_calendar_event", "get_upcoming_deadlines", "schedule_reminder"}
         self.assertEqual(set(CAPABILITY_CATALOG), expected)
-        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (12, 2, 9, 7))
+        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (13, 2, 9, 7))
 
     def test_all_reads_and_previews_call_native_directly(self):
         for name in (*READ_SCHEMAS, *PREVIEW_SCHEMAS):
@@ -249,20 +250,20 @@ class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
     def test_tampered_receipt_is_denied(self):
         graph, config, first = self.preview()
         receipt = receipt_for(first["pending_approval"])
-        receipt["claims"]["action"] = "atomic_send_notification"
+        receipt["action"] = "atomic_send_notification"
         self.assertEqual(self.approve(graph, config, first, receipt)["outcome"], "denied")
         self.assertEqual(self.issued, [])
 
     def test_expired_receipt_is_denied(self):
         graph, config, first = self.preview()
         receipt = receipt_for(first["pending_approval"])
-        self.now += timedelta(minutes=10)
+        self.now -= timedelta(seconds=1)
         self.assertEqual(self.approve(graph, config, first, receipt)["outcome"], "denied")
         self.assertEqual(self.client.effects, [])
 
     def test_receipt_expiring_during_fresh_revision_read_blocks_execution(self):
         graph, config, first = self.preview()
-        self.client.details_hook = lambda: setattr(self, "now", self.now + timedelta(minutes=10))
+        self.client.details_hook = lambda: setattr(self, "now", self.now - timedelta(seconds=1))
         receipt = receipt_for(first["pending_approval"])
         self.assertEqual(self.approve(graph, config, first, receipt)["outcome"], "blocked")
         self.assertEqual(self.issued, [])

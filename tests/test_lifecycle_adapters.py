@@ -7,7 +7,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from kwikledgers_langgraph.lifecycle_adapters import (
-    GitBranches, LifecycleGateway, LifecycleJournal, MCPContext, MCPPullRequests,
+    ExplicitLocalApproval, GitBranches, LifecycleGateway, LifecycleJournal, MCPContext, MCPPullRequests,
     MCPWorkItems, MCPDebtPreparation, SignedReceiptApproval, active_state, approval_binding, canonical, lifecycle_scope,
 )
 from kwikledgers_langgraph.graphs.lifecycle_engine import preview_digest
@@ -17,11 +17,15 @@ NOW = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 APPROVAL_KEY = b"a" * 32
 
 
-def receipt_for(pending, *, issued=NOW, expires=None, key=APPROVAL_KEY):
+def signed_receipt_for(pending, *, issued=NOW, expires=None, key=APPROVAL_KEY):
     claims = {field: pending[field] for field in ("action", "run_id", "request_id", "preview_digest")}
     claims.update({"decision": "approve", "subject": "external-human",
                    "issued_at": issued.isoformat(), "expires_at": (expires or issued + timedelta(minutes=5)).isoformat()})
     return {"claims": claims, "signature": hmac.new(key, canonical(claims).encode(), "sha256").hexdigest()}
+
+
+def receipt_for(pending, *, issued=NOW, expires=None, key=APPROVAL_KEY):
+    return signed_receipt_for(pending, issued=issued, expires=expires, key=key)
 
 
 def approved_state(action, preview, context):
@@ -31,6 +35,136 @@ def approved_state(action, preview, context):
     pending["receipt"] = receipt_for(pending)
     return {"run_id": "native-run", "observability": {"active_run_id": "native-run"},
             "context": context, "pending_approval": pending}
+
+
+class SignedReceiptApprovalTests(TestCase):
+    def test_independent_receipt_is_bound_and_expires(self):
+        state = approved_state("activate", {"task_id": 11}, {})
+        pending = approval_binding(state["pending_approval"])
+        verifier = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: NOW)
+        receipt = signed_receipt_for(pending)
+        self.assertTrue(verifier.verify(pending, receipt))
+        self.assertFalse(verifier.verify(pending, ExplicitLocalApproval(clock=lambda: NOW).confirm(pending, "native-request")))
+        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, key=b"b" * 32)))
+        for field in ("action", "run_id", "request_id", "preview_digest"):
+            self.assertFalse(verifier.verify({**pending, field: "foreign"}, receipt))
+        self.assertFalse(verifier.verify(pending, {**receipt, "signature": "tampered"}))
+        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, issued=NOW + timedelta(seconds=1))))
+        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, expires=NOW)))
+        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, expires=NOW + timedelta(seconds=601))))
+        self.assertFalse(verifier.verify(pending, {"claims": {}, "signature": ""}))
+        with self.assertRaises(ValueError):
+            SignedReceiptApproval(b"")
+
+
+class ExplicitLocalApprovalTests(TestCase):
+    def setUp(self):
+        self.verifier = ExplicitLocalApproval(clock=lambda: NOW)
+        self.state = approved_state("activate", {"task_id": 11}, {})
+        self.pending = approval_binding(self.state["pending_approval"])
+
+    def test_confirmation_without_signed_receipt_cannot_open_execution_scope(self):
+        confirmation = self.verifier.confirm(self.pending, "native-request")
+        state = deepcopy(self.state)
+        state["pending_approval"]["confirmation"] = confirmation
+        with self.assertRaises(ValueError):
+            with lifecycle_scope(state, self.verifier):
+                self.fail("Local confirmation must not authorize execution")
+
+    def test_foreign_binding_and_changed_exact_preview_are_rejected(self):
+        confirmation = self.verifier.confirm(self.pending, "native-request")
+        for field in ("action", "run_id", "request_id", "preview_digest", "previewed_at"):
+            self.assertFalse(self.verifier.verify(self.pending, {**confirmation, field: "foreign"}))
+        self.assertFalse(self.verifier.verify(self.pending, {**confirmation, "preview": {"task_id": 12}}))
+        self.assertFalse(self.verifier.verify(self.pending, {**confirmation, "source": "agent"}))
+        self.assertFalse(self.verifier.verify(self.pending, {**confirmation, "decision": "deny"}))
+        self.assertFalse(self.verifier.verify(self.pending, {**confirmation, "confirmed_at": (NOW - timedelta(seconds=1)).isoformat()}))
+        self.assertFalse(self.verifier.verify(self.pending, {**confirmation, "confirmed_at": (NOW + timedelta(seconds=1)).isoformat()}))
+
+    def test_confirmation_requires_current_unapproved_request(self):
+        for pending, request_id in ((self.pending, "foreign"), ({**self.pending, "approved": True}, "native-request")):
+            with self.assertRaises(ValueError):
+                self.verifier.confirm(pending, request_id)
+
+    def test_signed_receipts_are_rejected_even_with_configured_key(self):
+        receipt = signed_receipt_for(self.pending)
+        self.assertFalse(self.verifier.verify(self.pending, receipt))
+        self.assertFalse(ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: NOW).verify(self.pending, receipt))
+        self.assertFalse(SignedReceiptApproval(APPROVAL_KEY).verify(self.pending, receipt))
+
+
+class LocalJournalTests(TestCase):
+    def test_journal_rejects_symlinks_and_shared_writable_directories(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.db"
+            link = root / "link.db"
+            link.symlink_to(target)
+            with self.assertRaises(OSError):
+                LifecycleJournal(link)
+            self.assertFalse(target.exists())
+            shared = root / "shared"
+            shared.mkdir()
+            shared.chmod(0o777)
+            with self.assertRaises(ValueError):
+                LifecycleJournal(shared / "journal.db")
+            self.assertFalse((shared / "journal.db").exists())
+
+    def test_no_key_journal_reopens_and_replays_only_the_same_payload(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "journal.db"
+            journal = LifecycleJournal(path)
+            operation = Mock(return_value={"id": 42})
+            self.assertEqual(journal.once("create", {"title": "Exact"}, operation), {"id": 42})
+            journal.close()
+            journal = LifecycleJournal(path)
+            try:
+                self.assertEqual(journal.once("create", {"title": "Exact"}, operation), {"id": 42})
+                with self.assertRaises(ValueError):
+                    journal.once("create", {"title": "Changed"}, operation)
+                operation.assert_called_once()
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            finally:
+                journal.close()
+
+    def test_unknown_outcome_survives_restart_without_key(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "journal.db"
+            journal = LifecycleJournal(path)
+            operation = Mock(side_effect=OSError("Unknown"))
+            with self.assertRaises(OSError):
+                journal.once("create", {"title": "Exact"}, operation)
+            journal.close()
+            journal = LifecycleJournal(path)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "unknown"):
+                    journal.once("create", {"title": "Exact"}, operation)
+                operation.assert_called_once()
+            finally:
+                journal.close()
+
+    def test_checksum_corruption_and_signed_downgrade_are_rejected(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "journal.db"
+            journal = LifecycleJournal(path)
+            journal.put("event", {"id": 42})
+            with journal.db:
+                journal.db.execute("UPDATE lifecycle_evidence SET payload = ?", ('{"id":43}',))
+            with self.assertRaises(ValueError):
+                journal.get("event")
+            journal.close()
+            path = Path(directory) / "signed.db"
+            journal = LifecycleJournal(path, b"s" * 32)
+            journal.put("event", {"id": 42})
+            with journal.db:
+                journal.db.execute("UPDATE lifecycle_evidence SET signature = ?", ("old-hmac",))
+            journal.close()
+            journal = LifecycleJournal(path)
+            try:
+                with self.assertRaises(ValueError):
+                    journal.get("event")
+            finally:
+                journal.close()
 
 
 class NativeCapabilityClient:
@@ -273,27 +407,27 @@ class LifecycleEvidenceTests(TestCase):
                         "status": "Active", "expected_revision": 2}
         self.state = approved_state("activate", self.preview, {"repository": "payment"})
 
-    def test_signed_receipt_rejects_foreign_binding_bad_signature_and_long_ttl(self):
+    def test_only_independently_signed_bound_receipts_are_accepted(self):
         pending = approval_binding(self.state["pending_approval"])
-        self.assertTrue(self.approvals.verify(pending, receipt_for(pending)))
+        self.assertTrue(self.approvals.verify(pending, signed_receipt_for(pending)))
         for field in ("action", "run_id", "request_id", "preview_digest"):
             foreign = {**pending, field: "foreign"}
-            self.assertFalse(self.approvals.verify(pending, receipt_for(foreign)))
-        self.assertFalse(self.approvals.verify(pending, receipt_for(pending, key=b"b" * 32)))
-        self.assertFalse(self.approvals.verify(pending, receipt_for(pending, expires=NOW + timedelta(seconds=601))))
-        self.assertFalse(self.approvals.verify(pending, receipt_for(pending, issued=NOW - timedelta(seconds=1))))
-        self.assertFalse(self.approvals.verify(pending, receipt_for(pending, issued=NOW + timedelta(seconds=1))))
+            self.assertFalse(self.approvals.verify(pending, signed_receipt_for(foreign)))
+        self.assertFalse(self.approvals.verify(pending, signed_receipt_for(pending, key=b"b" * 32)))
+        self.assertFalse(self.approvals.verify(pending, signed_receipt_for(pending, expires=NOW + timedelta(seconds=601))))
+        self.assertFalse(self.approvals.verify(pending, signed_receipt_for(pending, issued=NOW - timedelta(seconds=1))))
+        self.assertFalse(self.approvals.verify(pending, signed_receipt_for(pending, issued=NOW + timedelta(seconds=1))))
 
     def test_expiration_is_checked_again_inside_active_scope(self):
         with lifecycle_scope(self.state, self.approvals):
-            self.now += timedelta(minutes=5)
+            self.now -= timedelta(seconds=1)
             with self.assertRaises(ValueError):
                 MCPWorkItems(self.gateway).activate(self.preview, key="activate")
         self.issuer.assert_not_called()
 
     def test_expiration_is_checked_after_journal_reservation(self):
         def reserve(key, arguments, operation):
-            self.now += timedelta(minutes=5)
+            self.now -= timedelta(seconds=1)
             return operation()
         with lifecycle_scope(self.state, self.approvals), patch.object(self.journal, "once", side_effect=reserve):
             with self.assertRaises(ValueError):
@@ -303,7 +437,7 @@ class LifecycleEvidenceTests(TestCase):
 
     def test_expiration_during_issuance_blocks_the_native_call(self):
         def issue(*args, **kwargs):
-            self.now += timedelta(minutes=5)
+            self.now -= timedelta(seconds=1)
             return "signed-capability"
         self.issuer.side_effect = issue
         with lifecycle_scope(self.state, self.approvals):
@@ -375,5 +509,5 @@ class LifecycleEvidenceTests(TestCase):
         self.journal.put("entry", {"ok": True})
         with self.journal.db:
             self.journal.db.execute("UPDATE lifecycle_evidence SET payload = ? WHERE key = ?", ('{"ok":false}', "entry"))
-        with self.assertRaisesRegex(ValueError, "signature"):
+        with self.assertRaisesRegex(ValueError, "nova prévia"):
             self.journal.get("entry")
