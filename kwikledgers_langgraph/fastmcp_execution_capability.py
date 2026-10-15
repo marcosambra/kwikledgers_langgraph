@@ -50,19 +50,11 @@ def issue_execution_capability(
         raise ExecutionCapabilityError("O LangGraph não possui aprovação válida para emitir a capability de execução.")
     if pending_approval.get("run_id") != observability.get("active_run_id"):
         raise ExecutionCapabilityError("A aprovação não pertence à execução ativa do LangGraph.")
-    from kwikledgers_langgraph.guardrails import AUTONOMOUS_ACTIONS, verify_signed_approval
+    from kwikledgers_langgraph.guardrails import AUTONOMOUS_ACTIONS, verify_execution_approval
 
-    expiration = None
-    if action not in AUTONOMOUS_ACTIONS:
-        if not verify_signed_approval(pending_approval, pending_approval.get("receipt")):
-            raise ExecutionCapabilityError("A execução exige recibo assinado vinculado à prévia atual.")
-        claims = pending_approval["receipt"]["claims"]
-        confirmed_at = datetime.fromisoformat(claims["issued_at"])
-        expiration = datetime.fromisoformat(claims["expires_at"])
-        issued_at = now if now is not None else datetime.now(timezone.utc)
-        if (not isinstance(issued_at, datetime) or issued_at.utcoffset() is None
-                or issued_at < confirmed_at or issued_at >= expiration):
-            raise ExecutionCapabilityError("A emissão deve ocorrer dentro da validade do recibo assinado.")
+    if ("receipt" in pending_approval or (action not in AUTONOMOUS_ACTIONS
+            and not verify_execution_approval(pending_approval, pending_approval.get("confirmation")))):
+        raise ExecutionCapabilityError("A execução exige confirmação humana vinculada à prévia atual.")
 
     return _sign_capability(
         capability_name=capability_name,
@@ -71,7 +63,6 @@ def issue_execution_capability(
         request_id=pending_approval.get("request_id"),
         action=action,
         now=now,
-        expires_at=expiration,
     )
 
 
@@ -96,6 +87,8 @@ def issue_lifecycle_execution_capability(
                for field in ("run_id", "request_id")):
             raise ValueError("Lifecycle issuer requires nonblank run and request identifiers")
         pending = trusted["pending_approval"]
+        if "receipt" in pending:
+            raise ValueError("Receipts were removed; generate a new preview")
         if (trusted.get("run_id") != binding["run_id"]
                 or trusted.get("observability", {}).get("active_run_id") != binding["run_id"]
                 or pending.get("approved") is not True or pending.get("action") != action
@@ -106,12 +99,11 @@ def issue_lifecycle_execution_capability(
         issued_at = now if now is not None else current_time
         if not isinstance(issued_at, datetime) or issued_at.utcoffset() is None or issued_at > current_time:
             raise ValueError("Lifecycle capability issuance requires a valid current time")
-        receipt_claims = pending["receipt"]["claims"]
-        confirmed_at = datetime.fromisoformat(receipt_claims["issued_at"])
-        receipt_expires = datetime.fromisoformat(receipt_claims["expires_at"])
-        if (confirmed_at.utcoffset() is None or receipt_expires.utcoffset() is None
-                or issued_at < confirmed_at or issued_at >= receipt_expires):
-            raise ValueError("Capability issuance must be inside the signed approval validity")
+        confirmation = pending.get("confirmation")
+        if isinstance(confirmation, dict):
+            confirmed_at = datetime.fromisoformat(confirmation["confirmed_at"])
+            if confirmed_at.utcoffset() is None or issued_at < confirmed_at:
+                raise ValueError("Capability cannot predate explicit confirmation")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise ExecutionCapabilityError("Authenticated lifecycle approval required for execution capability.") from error
 
@@ -122,7 +114,6 @@ def issue_lifecycle_execution_capability(
         request_id=binding["request_id"],
         action=action,
         now=issued_at,
-        expires_at=receipt_expires,
     )
 
 

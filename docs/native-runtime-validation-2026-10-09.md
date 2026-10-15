@@ -66,18 +66,18 @@ Esta nota registra o novo contrato documental, sem alterar os comandos,
 resultados ou limites históricos de 2026-10-09. As contagens acima não são
 resultados finais do novo contrato.
 
-O contrato exige recibo assinado independente, conforme escolha explícita do usuário.
-A prévia permanece separada da aprovação humana: a CLI inicial salva o pedido,
-e a retomada usa `--receipt` somente após a revisão humana. Um request ID sozinho
-não autoriza execução. `SignedReceiptApproval.verify` vincula o recibo à ação,
-ao digest da prévia, ao run e ao request; a revisão nativa continua
+O uso local normal dispensa configuração manual de assinatura e recibo externo.
+A prévia permanece separada da aprovação humana explícita: a CLI inicial salva
+o pedido, e a retomada usa `--approval-request-id` correspondente somente após
+a revisão humana. `ExplicitLocalApproval.confirm`/`verify` vincula a confirmação
+à ação, à prévia/payload exatos, ao run e ao request; a revisão nativa continua
 revalidada. `unknown_outcome` continua exigindo reconciliação, sem retry automático.
 
-Estados, journals e checkpoints locais funcionam sem chave; formatos antigos
-assinados exigem nova prévia. Tokens `.local-v1` são persistidos em ledger compartilhado
+Estados, journals e checkpoints funcionam sem chave; estados antigos assinados
+exigem a chave original. Tokens `.local-v1` são persistidos em ledger compartilhado
 entre LangGraph e FastMCP, com TTL máximo de cinco minutos e anti-replay. Não são
-aceitos por HTTP, inclusive em loopback. A aprovação usa HMAC e chave independente
-de pelo menos 32 bytes; não é opcional nas mutações não autônomas. O token não
+aceitos por HTTP, inclusive em loopback. HMAC antigo e recibos assinados seguem
+como compatibilidade opcional com suas chaves; nesse caminho, o token não
 ultrapassa a validade do recibo, cujo TTL máximo é de 600 segundos.
 
 A fronteira de confiança é a conta e suas permissões locais. Este contrato não

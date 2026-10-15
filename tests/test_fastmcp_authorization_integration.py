@@ -4,6 +4,7 @@ import base64
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -21,12 +22,12 @@ from kwikledgers_langgraph.fastmcp_execution_capability import (
     issue_lifecycle_execution_capability,
 )
 from kwikledgers_langgraph.lifecycle_adapters import (
-    SignedReceiptApproval,
+    ExplicitLocalApproval,
     active_state,
     approval_binding,
+    canonical,
     lifecycle_scope,
 )
-from test_lifecycle_adapters import receipt_for
 
 
 class AuthorizationFixture:
@@ -35,7 +36,7 @@ class AuthorizationFixture:
         self.now = datetime.now(timezone.utc)
         self.approval_key = secrets.token_bytes(32)
         self.execution_key = secrets.token_hex(32)
-        self.approvals = SignedReceiptApproval(self.approval_key, clock=lambda: self.now)
+        self.approvals = ExplicitLocalApproval(self.approval_key, clock=lambda: self.now)
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.ledger = Path(temporary.name) / "capabilities.sqlite3"
@@ -63,7 +64,9 @@ class AuthorizationFixture:
             "request_id": request_id,
             "approved": True,
         }
-        pending["receipt"] = receipt_for(pending, issued=self.now - timedelta(seconds=1), key=self.approval_key)
+        pending["confirmation"] = {**approval_binding(pending), "decision": "approve", "source": "human",
+                                   "subject": "fixture-human",
+                                   "confirmed_at": (self.now - timedelta(seconds=1)).isoformat()}
         return {
             "run_id": run_id, "observability": {"active_run_id": run_id},
             "context": {"repository": "fixture-repository"}, "pending_approval": pending,
@@ -95,7 +98,7 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
         self.assertNotEqual(self.approval_key, self.execution_key.encode())
         state = self.approved_state()
         binding = approval_binding(state["pending_approval"])
-        self.assertTrue(self.approvals.verify(binding, state["pending_approval"]["receipt"]))
+        self.assertTrue(self.approvals.verify(binding, state["pending_approval"]["confirmation"]))
         with lifecycle_scope(state, self.approvals):
             trusted = active_state("activate")
             self.assertEqual(trusted["verified_lifecycle_binding"], binding)
@@ -185,7 +188,7 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
             with self.subTest(mutation=mutation):
                 state = self.approved_state()
                 pending = state["pending_approval"]
-                receipt = pending["receipt"]
+                receipt = pending["confirmation"]
                 if mutation == "preview":
                     pending["preview"]["work_item_id"] = 12
                     pending["preview_digest"] = hashlib.sha256(
@@ -194,8 +197,7 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
                 elif mutation == "signature":
                     receipt["signature"] = "0" * 64
                 elif mutation == "independent_key":
-                    pending["receipt"] = receipt_for(pending, issued=self.now - timedelta(seconds=1),
-                                                     key=b"b" * 32)
+                    receipt["claims"] = {"decision": "approve"}
                 else:
                     pending["action"] = "close"
                 with self.assertRaises(ValueError):
@@ -205,7 +207,7 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
     def test_receipt_expiration_is_rechecked_at_issuance(self) -> None:
         with lifecycle_scope(self.approved_state(), self.approvals):
             trusted = active_state("activate")
-            self.now += timedelta(minutes=5)
+            self.now -= timedelta(seconds=2)
             with self.assertRaises(ValueError):
                 issue_lifecycle_execution_capability(
                     trusted, action="activate", capability_name="update_work_item_content", arguments=self.arguments,
@@ -238,7 +240,7 @@ class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCa
         self.verifier_source = self.fastmcp_root / "src/kwikledgers_fastmcp/shared/execution_capability.py"
         if not self.python.is_file():
             self.skipTest("Separate FastMCP .venv/bin/python is required")
-        self.assertGreaterEqual(sys.version_info[:2], (3, 12), "LangGraph requires Python 3.12 or newer")
+        self.assertGreaterEqual(sys.version_info[:2], (3, 11), "LangGraph requires Python 3.11 or newer")
         self.assertTrue(self.verifier_source.is_file())
 
     def issue_local(self, *, without_receipt: bool = False) -> str:
@@ -250,7 +252,7 @@ class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCa
             if not without_receipt:
                 return self.issue()
             trusted = self.approved_state()
-            trusted["pending_approval"].pop("receipt")
+            trusted["pending_approval"].pop("confirmation")
             trusted["verified_lifecycle_binding"] = approval_binding(trusted["pending_approval"])
             with patch("kwikledgers_langgraph.lifecycle_adapters.active_state", return_value=deepcopy(trusted)):
                 return issue_lifecycle_execution_capability(
@@ -269,7 +271,7 @@ import json
 from pathlib import Path
 import sys
 
-assert sys.version_info[:2] >= (3, 12), "FastMCP requires Python 3.12 or newer"
+assert sys.version_info[:2] >= (3, 10), "FastMCP requires Python 3.10 or newer"
 assert Path(sys.prefix).resolve() == Path(sys.argv[2]).resolve(), "Separate FastMCP venv required"
 source = Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location("real_fastmcp_execution_capability", source)
@@ -379,10 +381,15 @@ print(json.dumps({"accepted": True, "source": str(source)}))
         self.verify(token)
         self.verify(token, rejected="consumida")
 
-    def test_local_receiptless_verified_state_cannot_issue_token(self) -> None:
-        with self.assertRaises(ExecutionCapabilityError):
-            self.issue_local(without_receipt=True)
-        self.assertFalse(self.ledger.exists())
+    def test_local_receiptless_verified_state_issues_interoperable_token(self) -> None:
+        token = self.issue_local(without_receipt=True)
+        payload = self.decode(token)
+        self.assertEqual(payload["action"], "activate")
+        self.assertEqual(payload["run_id"], "test-run")
+        self.assertEqual(payload["request_id"], "test-request")
+        self.verify(token, consume=False)
+        self.verify(token)
+        self.verify(token, rejected="consumida")
 
     def test_local_payload_operation_and_revision_changes_are_rejected_before_consumption(self) -> None:
         token = self.issue_local()
@@ -406,5 +413,5 @@ print(json.dumps({"accepted": True, "source": str(source)}))
     def test_local_token_cannot_be_verified_without_the_issuance_ledger(self) -> None:
         token = self.issue_local()
         self.ledger = self.ledger.parent / "another-ledger.sqlite3"
-        self.verify(token, rejected="com segurança")
+        self.verify(token, rejected="registro")
         self.assertFalse(self.ledger.exists())

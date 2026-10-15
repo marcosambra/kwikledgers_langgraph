@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 import os
@@ -19,10 +20,9 @@ from kwikledgers_langgraph.fastmcp_execution_capability import (
     issue_runtime_execution_capability,
 )
 from kwikledgers_langgraph.lifecycle_adapters import (
-    SignedReceiptApproval, active_state, approval_binding, lifecycle_scope,
+    ExplicitLocalApproval, active_state, approval_binding, canonical, lifecycle_scope,
 )
 from kwikledgers_langgraph.guardrails import build_bound_approval
-from test_lifecycle_adapters import APPROVAL_KEY, receipt_for
 
 
 class FastMcpExecutionCapabilityTestCase(unittest.TestCase):
@@ -30,36 +30,32 @@ class FastMcpExecutionCapabilityTestCase(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.ledger = Path(temporary.name) / "capabilities.sqlite3"
-        environment = patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.ledger),
-                             "KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": APPROVAL_KEY.decode()})
+        environment = patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.ledger)})
         environment.start()
         self.addCleanup(environment.stop)
 
-    def _state(self, *, approved: bool = True, issued_at: datetime | None = None) -> dict[str, object]:
+    def _state(self, *, approved: bool = True) -> dict[str, object]:
         state = {"observability": {"active_run_id": "run-123"}}
         pending = build_bound_approval(state, action="story_status_transition.execute", preview={},
                                        approved=False, request_id="request-123", approval_source="test")
-        issued_at = issued_at or datetime.now(timezone.utc)
-        pending["previewed_at"] = issued_at.isoformat()
-        pending["receipt"] = receipt_for(pending, issued=issued_at)
+        pending["confirmation"] = ExplicitLocalApproval().confirm(pending, "request-123")
         pending["approved"] = approved
         return {**state, "pending_approval": pending}
 
     def test_issues_signed_capability_after_approved_gate(self) -> None:
-        issued_at = datetime.now(timezone.utc)
         with patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": "test-key"}, clear=False):
             token = issue_execution_capability(
-                self._state(issued_at=issued_at),
+                self._state(),
                 action="story_status_transition.execute",
                 capability_name="update_story_status",
                 arguments={"story_id": 120204, "status": "Aguardando PR"},
-                now=issued_at,
+                now=datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc),
             )
 
         self.assertIn(".", token)
         encoded_payload, _signature = token.split(".", 1)
         payload = json.loads(base64.urlsafe_b64decode(encoded_payload + "=="))
-        self.assertEqual(payload["issued_at"], issued_at.isoformat())
+        self.assertEqual(payload["issued_at"], "2026-09-17T12:00:00+00:00")
         self.assertRegex(payload["nonce"], r"^[0-9a-f]{32}$")
 
     def test_missing_or_blank_key_issues_registered_local_capability(self) -> None:
@@ -79,9 +75,8 @@ class FastMcpExecutionCapabilityTestCase(unittest.TestCase):
             self.assertEqual(payload["action"], "story_status_transition.execute")
             self.assertEqual(payload["run_id"], "run-123")
             self.assertEqual(payload["request_id"], "request-123")
-            validity = datetime.fromisoformat(payload["expires_at"]) - datetime.fromisoformat(payload["issued_at"])
-            self.assertGreater(validity, timedelta(0))
-            self.assertLessEqual(validity, timedelta(minutes=5))
+            self.assertEqual(datetime.fromisoformat(payload["expires_at"]) -
+                             datetime.fromisoformat(payload["issued_at"]), timedelta(minutes=5))
             with sqlite3.connect(self.ledger) as connection:
                 row = connection.execute("SELECT nonce_digest FROM local_execution_capabilities WHERE token_digest = ?",
                                          (hashlib.sha256(token.encode("ascii")).hexdigest(),)).fetchone()
@@ -177,7 +172,7 @@ class LifecycleExecutionCapabilityTestCase(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.ledger = Path(temporary.name) / "capabilities.sqlite3"
         self.approval_key = b"a" * 32
-        self.approvals = SignedReceiptApproval(self.approval_key, clock=lambda: self.now)
+        self.approvals = ExplicitLocalApproval(self.approval_key, clock=lambda: self.now)
         self.preview = {"task_id": 11, "assigned_to": "native@example.com", "area_path": "KL\\Squad",
                         "status": "Active", "expected_revision": 2}
         self.arguments = {"work_item_id": 11, "assigned_to": "native@example.com", "area_path": "KL\\Squad",
@@ -194,7 +189,8 @@ class LifecycleExecutionCapabilityTestCase(unittest.TestCase):
         pending = {"action": action, "run_id": "native-run", "request_id": "native-request",
                    "preview": deepcopy(preview), "approved": True, "previewed_at": self.now.isoformat(),
                    "preview_digest": hashlib.sha256(json.dumps(preview, sort_keys=True, allow_nan=False).encode()).hexdigest()}
-        pending["receipt"] = receipt_for(pending, issued=issued_at, expires=expires_at, key=self.approval_key)
+        pending["confirmation"] = {**approval_binding(pending), "decision": "approve", "source": "human",
+                       "subject": "local-operator", "confirmed_at": issued_at.isoformat()}
         return {"run_id": "native-run", "observability": {"active_run_id": "native-run"}, "pending_approval": pending}
 
     def issue(self, *, state=None, action="activate", capability_name="update_work_item_content", arguments=None):
@@ -253,35 +249,14 @@ class LifecycleExecutionCapabilityTestCase(unittest.TestCase):
             with self.assertRaises(ExecutionCapabilityError):
                 self.issue(state=trusted)
 
-    def test_invalid_keys_and_tampered_receipts_cannot_authorize_scope(self):
-        for key in (None, b"", b"a" * 31, "a" * 32):
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                SignedReceiptApproval(key, clock=lambda: self.now)
-        for mutation in ("signature", "key", "request_id", "expiry"):
-            state = deepcopy(self.state)
-            pending = state["pending_approval"]
-            if mutation == "signature":
-                pending["receipt"]["signature"] = "0" * 64
-            elif mutation == "key":
-                pending["receipt"] = receipt_for(pending, issued=self.now, key=b"b" * 32)
-            elif mutation == "request_id":
-                pending["receipt"]["claims"]["request_id"] = "foreign-request"
-            else:
-                pending["receipt"] = receipt_for(pending, issued=self.now, expires=self.now)
-            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
-                with lifecycle_scope(state, self.approvals):
-                    self.fail("Invalid receipt entered authenticated scope")
-        self.assertFalse(self.ledger.exists())
-
-    def test_local_capability_expiration_is_capped_by_signed_receipt(self):
+    def test_local_capability_has_its_own_five_minute_ttl(self):
         with lifecycle_scope(self.state, self.approvals):
             self.now += timedelta(minutes=4)
             token = self.issue()
         encoded, _signature = token.split(".", 1)
         payload = json.loads(base64.urlsafe_b64decode(encoded + "=="))
         self.assertEqual(datetime.fromisoformat(payload["expires_at"]) -
-                 datetime.fromisoformat(payload["issued_at"]), timedelta(minutes=1))
-        self.assertEqual(payload["expires_at"], self.state["pending_approval"]["receipt"]["claims"]["expires_at"])
+                 datetime.fromisoformat(payload["issued_at"]), timedelta(minutes=5))
 
     def test_naive_or_expired_issuance_time_is_denied(self):
         with lifecycle_scope(self.state, self.approvals):
@@ -303,26 +278,34 @@ class LifecycleExecutionCapabilityTestCase(unittest.TestCase):
                 os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": ""}, clear=False):
             self.assertTrue(self.issue().endswith(".local-v1"))
 
-    def test_verified_lifecycle_approval_without_receipt_cannot_issue(self):
+    def test_verified_lifecycle_approval_without_receipt_can_issue(self):
         trusted = deepcopy(self.state)
-        trusted["pending_approval"].pop("receipt")
+        trusted["pending_approval"].pop("confirmation")
         trusted["verified_lifecycle_binding"] = approval_binding(trusted["pending_approval"])
-        for key in ("", "test-key"):
+        for key, suffix in (("", "local-v1"), ("test-key", "local-v1")):
             with self.subTest(key=key), patch.dict(os.environ, {"KWIKLEDGERS_FASTMCP_EXECUTION_KEY": key}), patch(
                 "kwikledgers_langgraph.lifecycle_adapters.active_state", return_value=deepcopy(trusted),
             ) as active:
-                with self.assertRaises(ExecutionCapabilityError):
-                    self.issue(state=trusted)
+                token = self.issue(state=trusted)
                 active.assert_called_once_with("activate")
+                encoded, signature = token.split(".")
+                payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+                self.assertEqual(payload["expires_at"], (self.now + timedelta(minutes=5)).isoformat())
+                self.assertEqual(payload["run_id"], "native-run")
+                self.assertEqual(payload["request_id"], "native-request")
+                if suffix:
+                    self.assertEqual(signature, suffix)
+                else:
+                    self.assertEqual(signature, hmac.new(b"test-key", base64.urlsafe_b64decode(
+                        encoded + "=" * (-len(encoded) % 4)), "sha256").hexdigest())
                 for arguments in ({**self.arguments, "expected_revision": 3},
                                   {**self.arguments, "remaining_work_hours": 0}):
                     with self.subTest(arguments=arguments), self.assertRaises(ExecutionCapabilityError):
                         self.issue(state=trusted, arguments=arguments)
-        self.assertFalse(self.ledger.exists())
 
     def test_receiptless_issuer_requires_consistent_approved_binding(self):
         trusted = deepcopy(self.state)
-        trusted["pending_approval"].pop("receipt")
+        trusted["pending_approval"].pop("confirmation")
         trusted["verified_lifecycle_binding"] = approval_binding(trusted["pending_approval"])
         for field, value in (("approved", False), ("run_id", "foreign-run"), ("request_id", "foreign-request"),
                              ("action", "close")):

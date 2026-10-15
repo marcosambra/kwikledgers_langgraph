@@ -4,7 +4,6 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import json
-import os
 from pathlib import Path
 import sys
 from typing import Any, Iterator
@@ -13,7 +12,7 @@ from langgraph.types import Command
 
 from kwikledgers_langgraph import fastmcp_execution_capability as issuers
 from kwikledgers_langgraph.lifecycle_adapters import (
-    SignedReceiptApproval, LifecycleJournal, OperatorTaskPlan, build_lifecycle_ports,
+    ExplicitLocalApproval, LifecycleJournal, OperatorTaskPlan, build_lifecycle_ports,
 )
 from kwikledgers_langgraph.lifecycle_runtime import (
     LIFECYCLE_BUILDERS, SignedLifecycleCheckpointer, build_lifecycle_runtime,
@@ -32,8 +31,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--preview-key")
     result.add_argument("--resume", action="store_true")
     resume = result.add_mutually_exclusive_group()
-    resume.add_argument("--receipt", type=Path, help="Independent signed approval receipt for the current preview.")
-    result.add_argument("--approval-request-id", help="Optional request ID matching the signed receipt.")
+    result.set_defaults(receipt=None)
+    resume.add_argument("--approval-request-id", help="Explicitly approve the current preview request on a separate resume.")
     resume.add_argument("--branch-type", choices=("feature", "hotfix"))
     return result
 
@@ -73,24 +72,16 @@ def lifecycle_exit_code(output: dict[str, Any]) -> int:
 
 def lifecycle_confirmation(state: dict[str, Any], *, receipt: Any = None,
                            approval_request_id: str | None = None) -> Any:
-    if not isinstance(receipt, dict) or set(receipt) != {"claims", "signature"}:
-        raise ValueError("Resume requires an independent signed approval receipt")
+    if receipt is not None:
+        raise ValueError("Receipts were removed; review the preview and use --approval-request-id")
+    if approval_request_id is None:
+        raise ValueError("Resume requires explicit approval of the current request")
     pending = state.get("pending_approval", {})
     run_id = state.get("run_id")
     if (not run_id or pending.get("run_id") != run_id
             or state.get("observability", {}).get("active_run_id") != run_id):
-        raise ValueError("Signed approval requires the current active lifecycle run")
-    if approval_request_id is not None and pending.get("request_id") != approval_request_id:
-        raise ValueError("The request ID does not match the current signed preview")
-    return receipt
-
-
-def load_receipt(path: Path | None, checkpoint: Path) -> Any:
-    if path is None:
-        return None
-    if path.resolve() == checkpoint.resolve():
-        raise ValueError("The approval receipt must be separate from the checkpoint")
-    return json.loads(path.read_text(encoding="utf-8"))
+        raise ValueError("Explicit approval requires the current active lifecycle run")
+    return ExplicitLocalApproval().confirm(pending, approval_request_id)
 
 
 def run_cli(graph: Any, *, thread_id: str, request: dict[str, Any] | None = None,
@@ -98,7 +89,9 @@ def run_cli(graph: Any, *, thread_id: str, request: dict[str, Any] | None = None
             approval_request_id: str | None = None) -> dict[str, Any]:
     if not isinstance(thread_id, str) or not thread_id.strip():
         raise ValueError("Nonempty lifecycle thread required")
-    if branch_type is not None and (receipt is not None or approval_request_id is not None):
+    if receipt is not None:
+        raise ValueError("Receipts were removed; use --approval-request-id")
+    if sum(value is not None for value in (receipt, branch_type, approval_request_id)) > 1:
         raise ValueError("Approval and branch selection are separate process stages")
     config = {"configurable": {"thread_id": thread_id}}
     previous = graph.get_state(config)
@@ -159,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         execution_issuer, runtime_issuer = lifecycle_issuers()
         issuers_available = True
         operator = json.loads(args.operator_config.read_text(encoding="utf-8"))
-        approvals = SignedReceiptApproval(os.environ.get("KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY", "").encode())
+        approvals = ExplicitLocalApproval()
         with checkpoint_lock(args.checkpoint):
             journal = LifecycleJournal(args.checkpoint)
             plans = tuple(OperatorTaskPlan(
@@ -181,7 +174,6 @@ def main(argv: list[str] | None = None) -> int:
             if saved.values and saved.values.get("observability", {}).get("flow_name") != args.flow:
                 raise ValueError("Thread belongs to another lifecycle")
             output = run_cli(graph, thread_id=args.thread_id, resume=args.resume,
-                             receipt=load_receipt(args.receipt, args.checkpoint),
                              approval_request_id=args.approval_request_id,
                              branch_type=args.branch_type, request={"story_id": args.story_id,
                              "task_id": args.task_id, "repository_name": args.repository_name})

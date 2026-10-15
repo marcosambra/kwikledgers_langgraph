@@ -123,12 +123,14 @@ def _build_resume_state(arguments: argparse.Namespace) -> AgentState:
 
 
 def _validate_arguments(arguments: argparse.Namespace) -> None:
+    if getattr(arguments, "receipt", None) is not None:
+        raise TaskClosureCliError("Recibos foram removidos. Use '--approval-request-id'.")
     if arguments.resume_state_file:
         if resolve_backend_name(getattr(arguments, "backend", None)) == "legacy":
             if not getattr(arguments, "approval_request_id", None):
                 raise TaskClosureCliError("Informe '--approval-request-id' para a retomada legada.")
-        elif not getattr(arguments, "receipt", None):
-            raise TaskClosureCliError("Informe '--receipt' com a aprovação assinada independente ao retomar.")
+        elif not getattr(arguments, "receipt", None) and not getattr(arguments, "approval_request_id", None):
+            raise TaskClosureCliError("Informe '--approval-request-id' ao retomar.")
         return
     if getattr(arguments, "receipt", None) or getattr(arguments, "approval_request_id", None):
         raise TaskClosureCliError("Informe aprovação somente com '--resume-state-file', após a prévia.")

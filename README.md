@@ -14,6 +14,29 @@ Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
 aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
 O backend padrão é `fastmcp`; `legacy` existe somente como rollback temporário.
 
+## Contexto Da Task
+
+O ciclo nativo mantém os detalhes da task, da história pai e a hierarquia
+Story/Spike/Technical Debt/Bug → Feature → Epic consultada pelo FastMCP.
+Descrições, critérios de aceite e lacunas de contexto são preservados no
+estado. O plano aprovado inclui `hierarchy_context`; comandos de implementação
+e testes recebem esses detalhes como JSON em `KWIKLEDGERS_TASK_CONTEXT`, sem
+interpolação de shell. Conteúdo dos itens é contexto de produto, não autorização
+para executar ações ou ignorar os gates existentes. Recibos e checkpoints
+anteriores devem ser retomados conforme o plano e o contexto que os originaram.
+
+```mermaid
+flowchart LR
+	Task --> Pai[História pai]
+	Pai --> Feature --> Epic
+	Task --> Contexto[Contexto e lacunas]
+	Pai --> Contexto
+	Feature --> Contexto
+	Epic --> Contexto
+	Contexto --> Plano[Plano aprovado]
+	Plano --> Executor
+```
+
 ## Catálogo de Grafos
 
 `python -m kwikledgers_langgraph.graph_catalog` retorna JSON com nós, conexões,
@@ -142,7 +165,7 @@ poetry run python -m unittest discover -s tests
 
 ## Interface visual (LangGraph Studio local)
 
-O projeto usa um único ambiente Poetry (Python 3.12+) que já inclui
+O projeto usa um único ambiente Poetry (Python 3.11+) que já inclui
 `langgraph-cli[inmem]` como dependência declarada em `pyproject.toml`. O
 Studio local sobe direto pelo mesmo `.venv` do projeto, sem venv separado,
 e usa apenas ports mockados (nunca os adapters legados reais) definidos em

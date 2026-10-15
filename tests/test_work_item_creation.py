@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from langgraph.types import Command
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
-from kwikledgers_langgraph.lifecycle_adapters import LifecycleGateway, LifecycleJournal, SignedReceiptApproval, active_state
+from kwikledgers_langgraph.lifecycle_adapters import LifecycleGateway, LifecycleJournal, ExplicitLocalApproval, active_state
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 from kwikledgers_langgraph.work_item_creation import (
     ACTION, FIELD_REFERENCES, NATIVE_FIELDS, CreationValidationError, TechnicalDebtLifecycleRequired,
@@ -49,7 +49,7 @@ class CreationHarness:
         self.client = Mock()
         self.client.call.side_effect = self.call
         self.issuer = Mock(side_effect=self.issue)
-        self.approvals = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: NOW)
+        self.approvals = ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: NOW)
         self.gateway = LifecycleGateway(self.client, self.journal, self.issuer, Mock())
         tracking = Mock()
         tracking.record.side_effect = lambda event, key: self.journal.put(key + ":event", event)

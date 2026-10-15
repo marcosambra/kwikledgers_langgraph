@@ -146,7 +146,7 @@ def build_lifecycle_graph(
                     return {**_event(ports, state, step.name, "denied"),
                             "outcome": "denied", "outcome_reason": "approval_denied", "pending_approval": {}}
                 pending["approved"] = True
-                pending["receipt"] = deepcopy(confirmation)
+                pending["confirmation"] = deepcopy(confirmation)
                 return {**_event(ports, state, step.name, "approved"), "pending_approval": pending}
             except Exception:
                 return _failure(ports, state, step.name, reason="approval_failed")

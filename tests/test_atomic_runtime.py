@@ -16,7 +16,7 @@ from kwikledgers_langgraph.atomic_runtime import (
     AtomicLifecycleGateway, LifecycleRequired, build_atomic_runtime, read_capability, validate_arguments,
 )
 from kwikledgers_langgraph.lifecycle_adapters import (
-    LifecycleGateway, LifecycleJournal, SignedReceiptApproval, active_state, lifecycle_scope,
+    LifecycleGateway, LifecycleJournal, ExplicitLocalApproval, active_state, lifecycle_scope,
 )
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 from test_lifecycle_adapters import APPROVAL_KEY, NOW, approved_state, receipt_for
@@ -90,7 +90,7 @@ class AtomicRuntimeHarness:
         self.now = NOW
         self.client = AtomicNativeClient()
         self.issued = []
-        self.approvals = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: self.now)
+        self.approvals = ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: self.now)
         self.gateway = LifecycleGateway(self.client, self.journal, self.issue, Mock())
         self.tracking = Mock()
         self.tracking.record.side_effect = lambda event, key: self.journal.put(key + ":event", event)
@@ -124,10 +124,9 @@ class AtomicRuntimeHarness:
 
 
 class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
-    def test_catalog_covers_all_capabilities(self):
+    def test_catalog_covers_all_thirty_capabilities(self):
         expected = {"get_active_user", "get_my_work_items", "get_my_blocked_items", "get_my_daily_summary",
             "get_user_stories", "get_sprint_stories", "get_sprint_stories_detailed", "get_story_details", "get_open_prs",
-            "get_sprint_work_report",
             "preview_story_branch_association", "preview_story_pull_request", "associate_story_branch",
             "create_story_pull_request", "create_work_item", "find_similar_technical_debts",
             "save_technical_debt_preview_cache", "update_work_item_content", "update_work_item_effort",
@@ -135,7 +134,7 @@ class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
             "update_task_control", "append_daily_action_log", "record_ai_metrics", "read_tracking_snapshot",
             "send_notification", "create_calendar_event", "get_upcoming_deadlines", "schedule_reminder"}
         self.assertEqual(set(CAPABILITY_CATALOG), expected)
-        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (13, 2, 9, 7))
+        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (12, 2, 9, 7))
 
     def test_all_reads_and_previews_call_native_directly(self):
         for name in (*READ_SCHEMAS, *PREVIEW_SCHEMAS):

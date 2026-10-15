@@ -6,7 +6,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-import hmac
 import json
 import os
 from pathlib import Path
@@ -52,15 +51,16 @@ def lifecycle_scope(state: dict[str, Any], approvals: Any = None) -> Iterator[No
         digest = sha256(json.dumps(binding["preview"], sort_keys=True, allow_nan=False).encode()).hexdigest()
         if (pending.get("approved") is not True or binding["run_id"] != run_id
                 or binding["preview_digest"] != digest
-                or approvals.verify(binding, pending.get("receipt")) is not True):
-            raise ValueError("Verified independent signed lifecycle receipt required")
+                or "receipt" in pending
+                or approvals.verify(binding, pending.get("confirmation")) is not True):
+            raise ValueError("Verified explicit lifecycle approval required")
         trusted["verified_lifecycle_binding"] = binding
-        receipt = pending["receipt"]
-        information = receipt.get("claims", {}) if isinstance(receipt, dict) else {}
+        confirmation = pending["confirmation"]
+        information = confirmation if isinstance(confirmation, dict) else {}
         trusted["verified_lifecycle_approval"] = {
-            "method": "signed_receipt",
+            "method": "local_explicit" if information.get("source") == "human" else "custom",
             "decision": information.get("decision"), "subject": information.get("subject"),
-            "confirmed_at": information.get("issued_at"),
+            "confirmed_at": information.get("confirmed_at", information.get("issued_at")),
         }
     else:
         trusted.pop("verified_lifecycle_binding", None)
@@ -84,7 +84,8 @@ def active_state(action: str | None = None) -> dict[str, Any]:
         pending = state.get("pending_approval", {})
         if (binding.get("action") != action or approvals is None
                 or pending.get("approved") is not True
-                or approvals.verify(binding, pending.get("receipt")) is not True):
+                or "receipt" in pending
+                or approvals.verify(binding, pending.get("confirmation")) is not True):
             raise ValueError("Operation lacks an independently approved process stage")
     return deepcopy(state)
 
@@ -150,32 +151,10 @@ def validate_lifecycle_execution(state: dict[str, Any], *, action: str,
 
 class SignedReceiptApproval:
     def __init__(self, key: bytes, *, clock: Callable[[], datetime] | None = None) -> None:
-        if not isinstance(key, bytes) or len(key) < 32:
-            raise ValueError("An independent approval key of at least 32 bytes is required")
-        self.key = key
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def verify(self, pending: dict[str, Any], confirmation: Any) -> bool:
-        try:
-            if not isinstance(confirmation, dict) or set(confirmation) != {"claims", "signature"}:
-                return False
-            claims = confirmation["claims"]
-            if (not isinstance(claims, dict) or claims.get("decision") != "approve"
-                    or not isinstance(claims.get("subject"), str) or not claims["subject"].strip()):
-                return False
-            expected = hmac.new(self.key, canonical(claims).encode(), "sha256").hexdigest()
-            if not hmac.compare_digest(expected, confirmation["signature"]):
-                return False
-            if any(claims.get(field) != pending[field] for field in ("action", "run_id", "request_id", "preview_digest")):
-                return False
-            created = datetime.fromisoformat(claims["issued_at"])
-            expires = datetime.fromisoformat(claims["expires_at"])
-            previewed = datetime.fromisoformat(pending["previewed_at"])
-            now = self.clock()
-            return (all(value.utcoffset() is not None for value in (created, expires, previewed, now))
-                    and previewed <= created <= now < expires and (expires - created).total_seconds() <= 600)
-        except (KeyError, TypeError, ValueError, OverflowError):
-            return False
+        return False
 
 
 class ExplicitLocalApproval:
@@ -579,7 +558,12 @@ class MCPContext:
             raise ValueError("Active user/project/title required")
         return {"story_id": request["story_id"], "task_id": request["task_id"], "child_ids": children,
                 "repository": repository, "project": self.project, "area": self.area,
-                "user_id": identity, "title": story["title"], "revision": story["revision"], "status": story["status"]}
+                "user_id": identity, "title": story["title"], "revision": story["revision"], "status": story["status"],
+                "story_details": story, "task_details": task,
+                "hierarchy_context": task.get("hierarchy_context", story.get("hierarchy_context", {
+                    "ancestors": [], "missing_levels": ["Feature", "Epic"],
+                    "issues": [{"code": "hierarchy_context_unavailable"}], "complete": False,
+                }))}
 
     def snapshot(self, context: dict[str, Any]) -> dict[str, Any]:
         for field, current in (("project", self.project), ("area", self.area)):
@@ -708,8 +692,12 @@ class OperatorTasks:
         return sha256(canonical(payload).encode()).hexdigest()
 
     def _run(self, plan: OperatorTaskPlan, command: tuple[str, ...]) -> dict[str, Any]:
+        context = active_state()["context"]
+        execution_context = {field: context.get(field) for field in
+                             ("story_id", "task_id", "story_details", "task_details", "hierarchy_context")}
         result = subprocess.run(command, cwd=self.branches.path(plan.repository), shell=False,
-                                capture_output=True, timeout=600)
+                                capture_output=True, timeout=600,
+                                env={**os.environ, "KWIKLEDGERS_TASK_CONTEXT": canonical(execution_context)})
         return {"returncode": result.returncode, "command": list(command),
                 "stdout_sha256": sha256(result.stdout).hexdigest(), "stderr_sha256": sha256(result.stderr).hexdigest()}
 
@@ -721,7 +709,8 @@ class OperatorTasks:
             raise RuntimeError("Dry-run: no unique operator-configured task executor available")
         plan = matches[0]
         return {"plan_id": plan.plan_id, "files": list(plan.files), "logic": plan.logic,
-                "tests": [list(command) for command in plan.test_commands], "risks": list(plan.risks)}
+            "tests": [list(command) for command in plan.test_commands], "risks": list(plan.risks),
+            "hierarchy_context": context.get("hierarchy_context")}
 
     def implement(self, plan_id: str, *, key: str) -> dict[str, Any]:
         state = active_state("implement")

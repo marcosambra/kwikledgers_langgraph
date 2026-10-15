@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from kwikledgers_langgraph.lifecycle_adapters import (
     ExplicitLocalApproval, GitBranches, LifecycleGateway, LifecycleJournal, MCPContext, MCPPullRequests,
-    MCPWorkItems, MCPDebtPreparation, SignedReceiptApproval, active_state, approval_binding, canonical, lifecycle_scope,
+    MCPWorkItems, MCPDebtPreparation, OperatorTaskPlan, OperatorTasks, SignedReceiptApproval, active_state, approval_binding, canonical, lifecycle_scope,
 )
 from kwikledgers_langgraph.graphs.lifecycle_engine import preview_digest
 
@@ -25,36 +25,17 @@ def signed_receipt_for(pending, *, issued=NOW, expires=None, key=APPROVAL_KEY):
 
 
 def receipt_for(pending, *, issued=NOW, expires=None, key=APPROVAL_KEY):
-    return signed_receipt_for(pending, issued=issued, expires=expires, key=key)
+    return {**approval_binding(pending), "decision": "approve", "source": "human",
+            "subject": "local-operator", "confirmed_at": issued.isoformat()}
 
 
 def approved_state(action, preview, context):
     pending = {"action": action, "run_id": "native-run", "request_id": "native-request",
                "preview": deepcopy(preview), "preview_digest": preview_digest(preview),
                "previewed_at": NOW.isoformat(), "approved": True}
-    pending["receipt"] = receipt_for(pending)
+    pending["confirmation"] = receipt_for(pending)
     return {"run_id": "native-run", "observability": {"active_run_id": "native-run"},
             "context": context, "pending_approval": pending}
-
-
-class SignedReceiptApprovalTests(TestCase):
-    def test_independent_receipt_is_bound_and_expires(self):
-        state = approved_state("activate", {"task_id": 11}, {})
-        pending = approval_binding(state["pending_approval"])
-        verifier = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: NOW)
-        receipt = signed_receipt_for(pending)
-        self.assertTrue(verifier.verify(pending, receipt))
-        self.assertFalse(verifier.verify(pending, ExplicitLocalApproval(clock=lambda: NOW).confirm(pending, "native-request")))
-        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, key=b"b" * 32)))
-        for field in ("action", "run_id", "request_id", "preview_digest"):
-            self.assertFalse(verifier.verify({**pending, field: "foreign"}, receipt))
-        self.assertFalse(verifier.verify(pending, {**receipt, "signature": "tampered"}))
-        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, issued=NOW + timedelta(seconds=1))))
-        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, expires=NOW)))
-        self.assertFalse(verifier.verify(pending, signed_receipt_for(pending, expires=NOW + timedelta(seconds=601))))
-        self.assertFalse(verifier.verify(pending, {"claims": {}, "signature": ""}))
-        with self.assertRaises(ValueError):
-            SignedReceiptApproval(b"")
 
 
 class ExplicitLocalApprovalTests(TestCase):
@@ -63,13 +44,15 @@ class ExplicitLocalApprovalTests(TestCase):
         self.state = approved_state("activate", {"task_id": 11}, {})
         self.pending = approval_binding(self.state["pending_approval"])
 
-    def test_confirmation_without_signed_receipt_cannot_open_execution_scope(self):
+    def test_confirmation_without_key_exposes_verified_context(self):
         confirmation = self.verifier.confirm(self.pending, "native-request")
         state = deepcopy(self.state)
         state["pending_approval"]["confirmation"] = confirmation
-        with self.assertRaises(ValueError):
-            with lifecycle_scope(state, self.verifier):
-                self.fail("Local confirmation must not authorize execution")
+        with lifecycle_scope(state, self.verifier):
+            verified = active_state("activate")
+            self.assertEqual(verified["verified_lifecycle_binding"], self.pending)
+            self.assertEqual(verified["verified_lifecycle_approval"]["method"], "local_explicit")
+            self.assertNotIn("claims", verified["pending_approval"]["confirmation"])
 
     def test_foreign_binding_and_changed_exact_preview_are_rejected(self):
         confirmation = self.verifier.confirm(self.pending, "native-request")
@@ -292,6 +275,39 @@ class NativeContextTests(TestCase):
         self.client.user = {"message": "Usuario ativo: native@example.com"}
         self.assertEqual(self.context.resolve(self.request)["user_id"], "native@example.com")
 
+    def test_context_retains_task_story_and_ancestor_details(self):
+        hierarchy = {"ancestors": [{"id": 10, "work_item_type": "Bug"},
+                     {"id": 20, "work_item_type": "Feature", "description": "Feature scope"}],
+                     "missing_levels": ["Epic"], "issues": [], "complete": False}
+        self.client.items[11].update({"hierarchy_context": hierarchy, "description": "Task scope"})
+        self.client.items[10].update({"description": "Story scope", "acceptance_criteria": "Acceptance"})
+        result = self.context.resolve(self.request)
+        self.assertEqual(result["hierarchy_context"], hierarchy)
+        self.assertEqual(result["task_details"]["description"], "Task scope")
+        self.assertEqual(result["story_details"]["acceptance_criteria"], "Acceptance")
+
+    def test_missing_hierarchy_is_explicitly_incomplete(self):
+        result = self.context.resolve(self.request)
+        self.assertFalse(result["hierarchy_context"]["complete"])
+        self.assertEqual(result["hierarchy_context"]["issues"], [{"code": "hierarchy_context_unavailable"}])
+
+    def test_operator_plan_and_command_receive_hierarchy_without_shell_interpolation(self):
+        context = self.context.resolve(self.request)
+        plan = OperatorTaskPlan(plan_id="task-plan", repository="payment", story_id=10, task_id=11,
+                                files=("app.py",), implementation_command=("trusted-command",),
+                                test_commands=(("trusted-tests",),), logic="Implement task")
+        executor = OperatorTasks((plan,), self.context.branches, self.journal)
+        preview = executor.plan(context)
+        self.assertEqual(preview["hierarchy_context"], context["hierarchy_context"])
+        with lifecycle_scope({"run_id": "run", "observability": {"active_run_id": "run"}, "context": context}):
+            with patch("kwikledgers_langgraph.lifecycle_adapters.subprocess.run",
+                       return_value=Mock(returncode=0, stdout=b"", stderr=b"")) as run:
+                executor._run(plan, plan.implementation_command)
+        self.assertFalse(run.call_args.kwargs["shell"])
+        self.assertEqual(run.call_args.kwargs["env"]["KWIKLEDGERS_TASK_CONTEXT"], canonical({
+            field: context.get(field) for field in
+            ("story_id", "task_id", "story_details", "task_details", "hierarchy_context")}))
+
     def test_unconfigured_identity_fails_closed(self):
         self.client.user = {"message": "Email nao configurado. Configure AZURE_USER_EMAIL"}
         with self.assertRaises(ValueError):
@@ -332,7 +348,7 @@ class NativePullRequestTests(TestCase):
         gateway = LifecycleGateway(self.client, self.journal, self.issuer, None)
         self.branches = GitBranches({"payment": Path(self.directory.name)}, gateway)
         self.prs = MCPPullRequests(gateway, self.branches)
-        self.approvals = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: NOW)
+        self.approvals = ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: NOW)
         self.branch = "feature/KL-10-story"
         self.template = patch.object(Path, "read_text", return_value="Repository template")
         self.template.start()
@@ -400,16 +416,16 @@ class LifecycleEvidenceTests(TestCase):
     def setUp(self):
         NativeContextTests.setUp(self)
         self.now = NOW
-        self.approvals = SignedReceiptApproval(APPROVAL_KEY, clock=lambda: self.now)
+        self.approvals = ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: self.now)
         self.issuer = Mock(return_value="signed-capability")
         self.gateway = LifecycleGateway(self.client, self.journal, self.issuer, self.issuer)
         self.preview = {"task_id": 11, "assigned_to": "native@example.com", "area_path": "KL\\Squad",
                         "status": "Active", "expected_revision": 2}
         self.state = approved_state("activate", self.preview, {"repository": "payment"})
 
-    def test_only_independently_signed_bound_receipts_are_accepted(self):
+    def test_signed_receipts_are_always_rejected(self):
         pending = approval_binding(self.state["pending_approval"])
-        self.assertTrue(self.approvals.verify(pending, signed_receipt_for(pending)))
+        self.assertFalse(self.approvals.verify(pending, signed_receipt_for(pending)))
         for field in ("action", "run_id", "request_id", "preview_digest"):
             foreign = {**pending, field: "foreign"}
             self.assertFalse(self.approvals.verify(pending, signed_receipt_for(foreign)))

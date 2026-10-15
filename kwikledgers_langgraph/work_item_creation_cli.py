@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import json
-import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -11,8 +10,8 @@ from typing import Any
 from langgraph.types import Command
 
 from kwikledgers_langgraph.atomic_cli import load_json
-from kwikledgers_langgraph.lifecycle_adapters import SignedReceiptApproval, LifecycleJournal, build_lifecycle_ports
-from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_confirmation, lifecycle_issuers, lifecycle_exit_code, load_receipt
+from kwikledgers_langgraph.lifecycle_adapters import ExplicitLocalApproval, LifecycleJournal, build_lifecycle_ports
+from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_confirmation, lifecycle_issuers, lifecycle_exit_code
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 from kwikledgers_langgraph.work_item_creation import (
     ACTION, CreationValidationError, build_work_item_creation_graph, format_creation_rich_text,
@@ -27,8 +26,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--checkpoint", required=True, type=Path)
     result.add_argument("--thread-id", required=True)
     result.add_argument("--resume", action="store_true")
-    result.add_argument("--receipt", type=Path, help="Independent signed approval receipt for the current preview.")
-    result.add_argument("--approval-request-id", help="Optional request ID matching the signed receipt.")
+    approval = result.add_mutually_exclusive_group()
+    result.set_defaults(receipt=None)
+    approval.add_argument("--approval-request-id", help="Explicitly approve the current preview on a separate resume.")
     return result
 
 
@@ -41,6 +41,8 @@ def run_work_item_creation_cli(graph: Any, *, thread_id: str, arguments: dict[st
                                approval_request_id: str | None = None) -> dict[str, Any]:
     if not isinstance(thread_id, str) or not thread_id.strip():
         raise CreationValidationError("Nonempty creation thread required")
+    if receipt is not None:
+        raise CreationValidationError("Receipts were removed; use --approval-request-id")
     payload = validate_native_arguments(arguments)
     policy = validate_operator(operator)
     config = {"configurable": {"thread_id": thread_id}}
@@ -78,15 +80,15 @@ def main(argv: list[str] | None = None) -> int:
     args = arguments_parser.parse_args(argv)
     if (args.receipt is not None or args.approval_request_id is not None) and not args.resume:
         arguments_parser.error("Approval requires a separate --resume invocation")
-    if args.resume and args.receipt is None:
-        arguments_parser.error("--resume requires --receipt")
+    if args.resume and args.receipt is None and args.approval_request_id is None:
+        arguments_parser.error("--resume requires --approval-request-id")
     if not args.resume and not args.arguments_file:
         arguments_parser.error("preview requires --arguments-file")
     journal = None
     try:
         operator = validate_operator(load_json(args.operator_config))
         execution_issuer, runtime_issuer = lifecycle_issuers()
-        approvals = SignedReceiptApproval(os.environ.get("KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY", "").encode())
+        approvals = ExplicitLocalApproval()
         with checkpoint_lock(args.checkpoint):
             journal = LifecycleJournal(args.checkpoint)
             checkpoint = SignedLifecycleCheckpointer(journal)
@@ -112,7 +114,6 @@ def main(argv: list[str] | None = None) -> int:
                                                    operator=operator, formatter=native_formatter)
             output = run_work_item_creation_cli(graph, thread_id=args.thread_id, arguments=payload,
                 operator=operator, resume=args.resume,
-                receipt=load_receipt(args.receipt, args.checkpoint),
                 approval_request_id=args.approval_request_id)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)

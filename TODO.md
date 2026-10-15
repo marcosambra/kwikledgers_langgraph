@@ -11,11 +11,11 @@ Backlog operacional do `kwikledgers_langgraph/`.
 - A criação governada de `UserStory`, `Task` e `Bug`, com 15 campos nativos
   e restrições fornecidas pelo host, passou nos testes locais com emissor real.
 - O fechamento diário e o hook são nativos e somente de prévia, sem escrita Azure.
-- O contrato exige recibo assinado independente após a revisão humana da prévia.
-  A retomada usa `--receipt`; `--approval-request-id` sozinho não autoriza execução.
-  `SignedReceiptApproval.verify` preserva ação, digest da prévia, run e request.
+- O contrato local dispensa configuração manual de assinatura e recibo externo:
+  prévia separada, revisão humana e retomada explícita com `--approval-request-id`.
+  `ExplicitLocalApproval.confirm`/`verify` preserva ação, prévia/payload, run e request.
 - A revisão nativa continua obrigatória; `unknown_outcome` exige reconciliação,
-  não retry automático. A identidade declarada depende do host aprovador confiável.
+  não retry automático. Aprovação local não comprova identidade externa.
 - A desativação do legado não foi concluída.
 
 ## Evidências de 2026-10-09
@@ -38,8 +38,8 @@ Comandos e limites estão na [evidência de validação](docs/native-runtime-val
 - [x] Fluxos compiláveis de resumo, PR, branch e status, com contratos compartilhados preview-first.
 - [x] Resolução nativa de identidade; leitura stdio anterior de Marcos Pereira bem-sucedida.
 - [x] Lifecycle e catálogo atômico com gates, sem bypass genérico das sete rotas de processo.
-- [x] Estados, journals e checkpoints locais sem chave obrigatória; formatos antigos assinados exigem nova prévia.
-- [x] Recibos assinados obrigatórios, posteriores à prévia, com TTL máximo de 600 segundos e chave independente de pelo menos 32 bytes.
+- [x] Estados, journals e checkpoints sem chave obrigatória; assinatura opcional. Estados antigos assinados exigem a chave original.
+- [x] Aprovação local explícita posterior à prévia; recibos assinados com TTL máximo de 600 segundos permanecem como compatibilidade opcional.
 - [x] Tokens locais `.local-v1` persistidos em ledger compartilhado, com TTL máximo de cinco minutos e anti-replay; não aceitos por HTTP. HMAC antigo opcional.
 - [x] Bootstrap e workflows de especialistas preparados, sem instalações nem pipelines executados.
 - [x] Studio local com portas mockadas e resumo mínimo de observabilidade para tracking.
@@ -52,7 +52,7 @@ Não há proteção contra processos da mesma conta com escrita no ledger.
 - [x] Executar e registrar a suíte completa do LangGraph de 2026-10-09 (evidência histórica, não validação final do novo contrato).
 - [x] Concluir integração local da criação governada com recibo e emissor reais sob fixtures na rodada de 2026-10-09.
 - [ ] Validar restrições reais do host/processo para a criação governada.
-- [ ] Verificar aquisição externa do recibo pelo host em operação real, vínculo à prévia, expiração e rejeição de replay; obrigatório para mutações não autônomas.
+- [ ] Para consumidores que optem pela compatibilidade assinada, verificar aquisição externa de recibo pelo host, vínculo à prévia, expiração e rejeição de replay; não é requisito do caminho local normal.
 - [ ] Executar smoke Azure autenticado de leitura; identidade local não comprova autenticação Azure.
 - [ ] Executar calendário Windows real no host suportado.
 - [ ] Executar instalações de especialistas preparadas e registrar resultados.

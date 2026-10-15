@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 from kwikledgers_langgraph.lifecycle_cli import lifecycle_confirmation, lifecycle_issuers, main, parser, run_cli
 from kwikledgers_langgraph.lifecycle_adapters import (
-    LifecycleJournal, SignedReceiptApproval, active_state, build_lifecycle_ports,
+    ExplicitLocalApproval, LifecycleJournal, SignedReceiptApproval, active_state, build_lifecycle_ports,
 )
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer, build_lifecycle_runtime
 from test_lifecycle_adapters import APPROVAL_KEY, NOW, NativeCapabilityClient, approved_state, approval_binding, receipt_for
@@ -74,9 +74,9 @@ class LifecycleCLIContractTests(TestCase):
         base = ["story_start", "--operator-config", "operator.json", "--checkpoint", "state.db",
                 "--thread-id", "thread", "--resume", "--approval-request-id", "request"]
         self.assertEqual(parser().parse_args(base).approval_request_id, "request")
-        self.assertEqual(parser().parse_args(base + ["--receipt", "receipt.json"]).receipt, Path("receipt.json"))
-        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
-            parser().parse_args(base + ["--receipt", "receipt.json", "--branch-type", "feature"])
+        for suffix in (["--receipt", "receipt.json"], ["--branch-type", "feature"]):
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                parser().parse_args(base + suffix)
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
             main([argument for argument in base if argument != "--resume"])
 
@@ -89,26 +89,20 @@ class LifecycleCLIContractTests(TestCase):
         state["pending_approval"] = approval_binding(state["pending_approval"])
         self.graph.get_state.return_value = SimpleNamespace(values=state, next=("activate_gate",))
         with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id="thread", resume=True, receipt=receipt_for(state["pending_approval"]),
-                    approval_request_id="foreign")
+            run_cli(self.graph, thread_id="thread", resume=True, approval_request_id="foreign")
         self.graph.invoke.assert_not_called()
-        with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id="thread", resume=True, approval_request_id="native-request")
-        self.graph.invoke.assert_not_called()
-        run_cli(self.graph, thread_id="thread", resume=True, receipt=receipt_for(state["pending_approval"]),
-                approval_request_id="native-request")
+        run_cli(self.graph, thread_id="thread", resume=True, approval_request_id="native-request")
         confirmation = self.graph.invoke.call_args.args[0].resume
-        self.assertTrue(SignedReceiptApproval(APPROVAL_KEY, clock=lambda: NOW).verify(state["pending_approval"], confirmation))
+        self.assertTrue(ExplicitLocalApproval().verify(state["pending_approval"], confirmation))
 
-    def test_signed_approval_cannot_change_active_run_or_use_malformed_envelope(self):
+    def test_local_approval_cannot_change_active_run_or_combine_receipt(self):
         state = approved_state("activate", {"task_id": 11}, {})
         state["pending_approval"] = approval_binding(state["pending_approval"])
         with self.assertRaises(ValueError):
             lifecycle_confirmation(state, receipt={}, approval_request_id="native-request")
         state["observability"]["active_run_id"] = "foreign"
         with self.assertRaises(ValueError):
-            lifecycle_confirmation(state, receipt=receipt_for(state["pending_approval"]),
-                                   approval_request_id="native-request")
+            lifecycle_confirmation(state, approval_request_id="native-request")
 
 
 class LocalCheckpointTests(TestCase):
@@ -250,7 +244,7 @@ class OperationalLifecycleTests(TestCase):
         self.flow = flow
         self.journal = LifecycleJournal(self.root / "checkpoint.db", state_key)
         self.journals.append(self.journal)
-        self.approvals = approvals if approvals is not None else SignedReceiptApproval(APPROVAL_KEY, clock=lambda: self.now)
+        self.approvals = approvals if approvals is not None else ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: self.now)
         ports = build_lifecycle_ports(repositories={"payment": self.root}, project="KL", area="Squad",
                                       journal=self.journal, approvals=self.approvals, client=self.client,
                                       execution_issuer=self.execution_issuer, runtime_issuer=self.runtime_issuer,
@@ -262,9 +256,8 @@ class OperationalLifecycleTests(TestCase):
     def start(self):
         return run_cli(self.graph, thread_id=self.thread, request=self.request)
 
-    def approve(self, result, request_id=None, *, receipt=None):
+    def approve(self, result, request_id=None):
         return run_cli(self.graph, thread_id=self.thread, resume=True,
-                       receipt=receipt if receipt is not None else receipt_for(result["pending_approval"], issued=self.now),
                        approval_request_id=request_id if request_id is not None else result["pending_approval"]["request_id"])
 
     def finish_start(self):
@@ -308,52 +301,49 @@ class OperationalLifecycleTests(TestCase):
 
     def test_checkpoint_restart_accepts_the_same_pending_receipt_once(self):
         first = self.start()
-        receipt = receipt_for(first["pending_approval"], issued=self.now)
+        receipt = first["pending_approval"]["request_id"]
         self.journal.close()
         self.journals.remove(self.journal)
         self.open_runtime("story_start")
-        result = self.approve(first, receipt=receipt)
+        result = self.approve(first, receipt)
         self.assertEqual(result["run_id"], first["run_id"])
         self.assertEqual(result["prompt"]["action"], "select_branch_type")
         self.assertEqual(len(self.azure_effects()), 1)
         with self.assertRaises(ValueError):
-            self.approve(first, receipt=receipt)
+            self.approve(first, receipt)
         self.assertEqual(len(self.azure_effects()), 1)
 
-    def test_no_key_restart_requires_signed_receipt_then_new_stage_approval(self):
+    def test_no_key_restart_requires_explicit_current_request_then_new_stage_approval(self):
         self.journal.close()
         self.journals.remove(self.journal)
-        self.open_runtime("story_start", state_key=None)
+        self.open_runtime("story_start", state_key=None, approvals=ExplicitLocalApproval())
         first = self.start()
         self.assertEqual(self.azure_effects(), [])
         request_id = first["pending_approval"]["request_id"]
-        receipt = receipt_for(first["pending_approval"], issued=self.now)
         self.journal.close()
         self.journals.remove(self.journal)
-        self.open_runtime("story_start", state_key=None)
+        self.open_runtime("story_start", state_key=None, approvals=ExplicitLocalApproval())
         with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt, approval_request_id="foreign")
+            run_cli(self.graph, thread_id=self.thread, resume=True, approval_request_id="foreign")
         self.assertEqual(self.azure_effects(), [])
-        with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id=self.thread, resume=True, approval_request_id=request_id)
-        self.assertEqual(self.azure_effects(), [])
-        result = self.approve(first)
+        result = run_cli(self.graph, thread_id=self.thread, resume=True, approval_request_id=request_id)
         self.assertEqual(result["run_id"], first["run_id"])
         self.assertEqual(result["prompt"]["action"], "select_branch_type")
         self.assertEqual(len(self.azure_effects()), 1)
         with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt, approval_request_id=request_id)
+            run_cli(self.graph, thread_id=self.thread, resume=True, approval_request_id=request_id)
         result = run_cli(self.graph, thread_id=self.thread, resume=True, branch_type="feature")
         with self.assertRaises(ValueError):
-            run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt, approval_request_id=request_id)
-        self.assertEqual(len(self.azure_effects()), 1)
-        result = self.approve(result)
+            run_cli(self.graph, thread_id=self.thread, resume=True, approval_request_id=request_id)
+        result = run_cli(self.graph, thread_id=self.thread, resume=True,
+                         approval_request_id=result["pending_approval"]["request_id"])
         self.assertEqual(result["pending_approval"]["action"], "branch_links")
-        result = self.approve(result)
+        result = run_cli(self.graph, thread_id=self.thread, resume=True,
+                         approval_request_id=result["pending_approval"]["request_id"])
         self.assertEqual(result["outcome"], "completed")
         self.assertEqual([name for name, _ in self.azure_effects()], ["update_work_item_content", "associate_story_branch"])
 
-    def test_lifecycle_main_requires_key_and_signed_receipts_on_reopen(self):
+    def test_lifecycle_main_runs_separate_local_approvals_without_keys(self):
         operator = self.root / "operator.json"
         operator.write_text(json.dumps({"repositories": {"payment": str(self.root)},
                                         "project": "KL", "area": "Squad"}), encoding="utf-8")
@@ -372,36 +362,17 @@ class OperationalLifecycleTests(TestCase):
                 self.assertEqual(main(base + suffix), expected_code)
             return json.loads(output.getvalue())
 
-        def approve(result, expected_code):
-            receipt_path = self.root / "receipt.json"
-            receipt_path.write_text(json.dumps(receipt_for(result["pending_approval"], issued=self.now)), encoding="utf-8")
-            return invoke(["--resume", "--receipt", str(receipt_path),
-                           "--approval-request-id", result["pending_approval"]["request_id"]], expected_code)
-
         with patch.dict("os.environ", {}, clear=True), \
                 patch("kwikledgers_langgraph.lifecycle_cli.lifecycle_issuers",
                       return_value=(self.execution_issuer, self.runtime_issuer)), \
                 patch("kwikledgers_langgraph.lifecycle_cli.build_lifecycle_ports", side_effect=ports_for):
-            with redirect_stderr(StringIO()):
-                self.assertEqual(main(base + ["--story-id", "10", "--task-id", "11",
-                                              "--repository-name", "payment"]), 1)
-            self.assertEqual(self.azure_effects(), [])
-        self.assertEqual(self.azure_effects(), [])
-        with patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": APPROVAL_KEY.decode()}, clear=True), \
-                patch("kwikledgers_langgraph.lifecycle_cli.SignedReceiptApproval", return_value=self.approvals), \
-                patch("kwikledgers_langgraph.lifecycle_cli.lifecycle_issuers",
-                      return_value=(self.execution_issuer, self.runtime_issuer)), \
-                patch("kwikledgers_langgraph.lifecycle_cli.build_lifecycle_ports", side_effect=ports_for):
             first = invoke(["--story-id", "10", "--task-id", "11", "--repository-name", "payment"], 2)
-            with redirect_stderr(StringIO()):
-                self.assertEqual(main(base + ["--resume", "--approval-request-id",
-                                              first["pending_approval"]["request_id"]]), 1)
             self.assertEqual(self.azure_effects(), [])
-            result = approve(first, 2)
+            result = invoke(["--resume", "--approval-request-id", first["pending_approval"]["request_id"]], 2)
             self.assertEqual(result["prompt"]["action"], "select_branch_type")
             result = invoke(["--resume", "--branch-type", "feature"], 2)
-            result = approve(result, 2)
-            result = approve(result, 0)
+            result = invoke(["--resume", "--approval-request-id", result["pending_approval"]["request_id"]], 2)
+            result = invoke(["--resume", "--approval-request-id", result["pending_approval"]["request_id"]], 0)
             self.assertEqual(result["run_id"], first["run_id"])
             self.assertEqual(result["outcome"], "completed")
         self.assertEqual([name for name, _ in self.azure_effects()], ["update_work_item_content", "associate_story_branch"])
@@ -410,8 +381,8 @@ class OperationalLifecycleTests(TestCase):
         first = self.start()
         receipt = receipt_for(first["pending_approval"])
         self.now += timedelta(minutes=5)
-        result = run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt)
-        self.assertEqual(result["outcome"], "denied")
+        with self.assertRaisesRegex(ValueError, "removed"):
+            run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt)
         self.assertEqual(self.azure_effects(), [])
 
     def test_revision_change_blocks_activation(self):
@@ -454,24 +425,23 @@ class OperationalLifecycleTests(TestCase):
 
     def test_receipt_expiring_between_gate_and_execute_is_rechecked(self):
         first = self.start()
-        receipt = receipt_for(first["pending_approval"])
+        receipt = first["pending_approval"]["request_id"]
         def expire_execution(arguments):
             event = json.loads(arguments["details"])
             if event["action"] == "activate" and event["phase"] == "execution_started":
-                self.now = NOW + timedelta(minutes=5)
+                self.now = NOW - timedelta(seconds=1)
         self.client.tracking_hook = expire_execution
-        self.assertEqual(run_cli(self.graph, thread_id=self.thread, resume=True, receipt=receipt)["outcome"], "blocked")
+        self.assertEqual(self.approve(first, receipt)["outcome"], "blocked")
         self.assertEqual(self.azure_effects(), [])
 
     def test_completion_returns_web_url_then_requires_new_status_receipt(self):
         result = self.completion()
         self.assertEqual(result["pending_approval"]["action"], "draft_pr")
-        old_receipt = receipt_for(result["pending_approval"], issued=self.now)
-        result = self.approve(result, receipt=old_receipt)
+        old_receipt = result["pending_approval"]["request_id"]
+        result = self.approve(result, old_receipt)
         self.assertEqual(result["direct_pr_url"], "https://dev.azure.com/KL/_git/payment/pullrequest/1")
         self.assertEqual(result["pending_approval"]["action"], "awaiting_pr")
         self.assertEqual(self.client.items[10]["state"], "Desenvolvimento")
-        self.assertFalse(self.approvals.verify(result["pending_approval"], old_receipt))
         result = self.approve(result)
         self.assertEqual(result["outcome"], "completed")
         self.assertEqual(self.client.items[10]["state"], "Aguardando PR")
