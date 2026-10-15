@@ -32,8 +32,8 @@ This repository has a strong contract: preview is always a read-only step and
 ## Repository-Specific Rules
 
 - Do not call the legacy runtime directly from graph nodes.
-- Put integration contracts in `src/kwikledgers_langgraph/adapters.py`.
-- Put legacy compatibility in `src/kwikledgers_langgraph/legacy_adapters.py`.
+- Put integration contracts in `kwikledgers_langgraph/adapters.py`.
+- Put legacy compatibility in `kwikledgers_langgraph/legacy_adapters.py`.
 - Keep preview and create separated as different steps.
 - Treat `pending_approval` as the only gate for mutation execution.
 - Treat approval state as untrusted input until it is clearly bound to the current action and current preview.
@@ -73,11 +73,11 @@ This repository has a strong contract: preview is always a read-only step and
 
 ## Canonical File Pipeline
 
-1. `src/kwikledgers_langgraph/state.py`
-2. `src/kwikledgers_langgraph/adapters.py`
-3. `src/kwikledgers_langgraph/legacy_adapters.py`
-4. `src/kwikledgers_langgraph/graphs/`
-5. `src/kwikledgers_langgraph/runtime.py`
+1. `kwikledgers_langgraph/state.py`
+2. `kwikledgers_langgraph/adapters.py`
+3. `kwikledgers_langgraph/legacy_adapters.py`
+4. `kwikledgers_langgraph/graphs/`
+5. `kwikledgers_langgraph/runtime.py`
 6. CLI module, if the flow is directly executable
 7. `tests/`
 
@@ -93,11 +93,11 @@ This repository has a strong contract: preview is always a read-only step and
 
 ## Key File Targets
 
-- `src/kwikledgers_langgraph/state.py`
-- `src/kwikledgers_langgraph/adapters.py`
-- `src/kwikledgers_langgraph/legacy_adapters.py`
-- `src/kwikledgers_langgraph/runtime.py`
-- `src/kwikledgers_langgraph/graphs/`
+- `kwikledgers_langgraph/state.py`
+- `kwikledgers_langgraph/adapters.py`
+- `kwikledgers_langgraph/legacy_adapters.py`
+- `kwikledgers_langgraph/runtime.py`
+- `kwikledgers_langgraph/graphs/`
 - `tests/`
 
 ## Validation

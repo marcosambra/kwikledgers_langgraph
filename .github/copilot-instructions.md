@@ -19,11 +19,11 @@ Comandos que devem ser priorizados pelo agente:
 - validar CLI de PR: `poetry run kwikledgers-langgraph-story-pr --help`
 
 Mapa curto do projeto:
-- `src/kwikledgers_langgraph/adapters.py`: portas e contratos de integração
-- `src/kwikledgers_langgraph/legacy_adapters.py`: ponte opcional para o runtime legado
-- `src/kwikledgers_langgraph/guardrails.py`: classificação de operações e aprovação explícita
-- `src/kwikledgers_langgraph/observability.py`: `correlation_id`, `active_run_id` e timeline
-- `src/kwikledgers_langgraph/graphs/`: fluxos LangGraph
+- `kwikledgers_langgraph/adapters.py`: portas e contratos de integração
+- `kwikledgers_langgraph/legacy_adapters.py`: ponte opcional para o runtime legado
+- `kwikledgers_langgraph/guardrails.py`: classificação de operações e aprovação explícita
+- `kwikledgers_langgraph/observability.py`: `correlation_id`, `active_run_id` e timeline
+- `kwikledgers_langgraph/graphs/`: fluxos LangGraph
 - `tests/`: cobertura unitária com `unittest`, sem `pytest`
 
 Convenções do runtime:

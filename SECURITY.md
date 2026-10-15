@@ -32,8 +32,8 @@ incident channel and include:
 
 ### Sensitive Areas
 
-- `src/kwikledgers_langgraph/legacy_adapters.py`
-- guardrail and approval logic under `src/kwikledgers_langgraph/`
+- `kwikledgers_langgraph/legacy_adapters.py`
+- guardrail and approval logic under `kwikledgers_langgraph/`
 - runtime observability and timeline state
 - GitHub Actions workflows and packaging metadata
 
@@ -70,7 +70,7 @@ incidentes da KwikLedgers e inclua:
 
 ### Áreas Sensíveis
 
-- `src/kwikledgers_langgraph/legacy_adapters.py`
-- lógica de guardrails e aprovação sob `src/kwikledgers_langgraph/`
+- `kwikledgers_langgraph/legacy_adapters.py`
+- lógica de guardrails e aprovação sob `kwikledgers_langgraph/`
 - observabilidade do runtime e timeline no estado compartilhado
 - workflows do GitHub Actions e metadata de empacotamento

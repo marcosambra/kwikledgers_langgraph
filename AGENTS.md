@@ -23,14 +23,14 @@ Read these files in this order before making non-trivial changes:
 - Treat guardrails, observability and approval gates as core runtime behavior.
 - Graph nodes must return partial state updates; do not assume the full state
   is present.
-- Use helpers from `src/kwikledgers_langgraph/state.py` when appending
+- Use helpers from `kwikledgers_langgraph/state.py` when appending
   decisions, tracking events, errors or observability timeline entries.
 - Use Python 3.12 or newer for code, environments and tests.
 
 ## Legacy Boundary
 
-- Keep integration ports in `src/kwikledgers_langgraph/adapters.py`.
-- Keep legacy bridges in `src/kwikledgers_langgraph/legacy_adapters.py`.
+- Keep integration ports in `kwikledgers_langgraph/adapters.py`.
+- Keep legacy bridges in `kwikledgers_langgraph/legacy_adapters.py`.
 - Do not call the legacy runtime directly from graph nodes.
 - If legacy compatibility is needed, prefer `KWIKLEDGERS_MCP_SERVERS_PATH` or
   `KWIKLEDGERS_LEGACY_ROOT`; do not hardcode monorepo paths.
@@ -58,11 +58,11 @@ Additional rules:
 
 When adding a new flow, touch files in this sequence when applicable:
 
-1. `src/kwikledgers_langgraph/state.py`
-2. `src/kwikledgers_langgraph/adapters.py`
-3. `src/kwikledgers_langgraph/legacy_adapters.py`
-4. `src/kwikledgers_langgraph/graphs/`
-5. `src/kwikledgers_langgraph/runtime.py`
+1. `kwikledgers_langgraph/state.py`
+2. `kwikledgers_langgraph/adapters.py`
+3. `kwikledgers_langgraph/legacy_adapters.py`
+4. `kwikledgers_langgraph/graphs/`
+5. `kwikledgers_langgraph/runtime.py`
 6. CLI module
 7. `tests/`
 
