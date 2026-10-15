@@ -5,9 +5,8 @@
 This repository evolves the future KwikLedgers orchestration runtime as a
 standalone Python project based on LangGraph.
 
-The legacy runtime outside this repository is reference and integration
-surface only. Do not edit the legacy runtime when the work can be isolated in
-this repository.
+The `fastmcp` backend (`kwikledgers_fastmcp`) is the only integration backend;
+the former legacy backend was removed.
 
 ## Start Here
 
@@ -27,13 +26,11 @@ Read these files in this order before making non-trivial changes:
   decisions, tracking events, errors or observability timeline entries.
 - Use Python 3.12 or newer for code, environments and tests.
 
-## Legacy Boundary
+## Integration Boundary
 
 - Keep integration ports in `kwikledgers_langgraph/adapters.py`.
-- Keep legacy bridges in `kwikledgers_langgraph/legacy_adapters.py`.
-- Do not call the legacy runtime directly from graph nodes.
-- If legacy compatibility is needed, prefer `KWIKLEDGERS_MCP_SERVERS_PATH` or
-  `KWIKLEDGERS_LEGACY_ROOT`; do not hardcode monorepo paths.
+- Keep FastMCP bridges in `kwikledgers_langgraph/fastmcp_adapters.py`.
+- Do not call integrations directly from graph nodes.
 
 ## Mutable Flow Rule
 
@@ -60,7 +57,7 @@ When adding a new flow, touch files in this sequence when applicable:
 
 1. `kwikledgers_langgraph/state.py`
 2. `kwikledgers_langgraph/adapters.py`
-3. `kwikledgers_langgraph/legacy_adapters.py`
+3. `kwikledgers_langgraph/fastmcp_adapters.py`
 4. `kwikledgers_langgraph/graphs/`
 5. `kwikledgers_langgraph/runtime.py`
 6. CLI module
@@ -90,5 +87,5 @@ Primary commands:
   pattern.
 - If the task is a mutable flow, use the preview-first skill and enforce the
   approval boundary.
-- If the task seems to require editing legacy code directly, stop and verify
-  whether the seam can be moved into an adapter instead.
+- If the task seems to require editing `kwikledgers_fastmcp` directly, stop and
+  verify whether the seam can be moved into an adapter instead.

@@ -19,7 +19,7 @@ DAILY_SUMMARY_INPUT_SCHEMA: dict[str, Any] = {
         },
         "notifications_enabled": {
             "type": "boolean",
-            "description": "Envia notificacao pelo adapter legado de Windows (padrao: false).",
+            "description": "Envia notificacao pelo adapter nativo do FastMCP (padrao: false).",
         },
         "backend": {
             "type": "string",

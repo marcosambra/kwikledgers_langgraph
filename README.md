@@ -4,15 +4,15 @@ Repositório Python do runtime futuro de orquestração da KwikLedgers em
 LangGraph.
 
 Objetivos deste primeiro slice:
-- manter o agente legado atual intocado
+- manter o agente anterior intocado
 - abrir um seam tecnico para migracao incremental dos fluxos
 - definir estado tipado e portas de integracao independentes do MCP atual
 - compilar o primeiro subgrafo de `Daily Summary`
 
-e notificacoes sejam plugados sem editar o runtime legado nesta fase.
+e notificacoes sejam plugados sem editar o runtime anterior.
 Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
 aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
-O backend padrão é `fastmcp`; `legacy` existe somente como rollback temporário.
+O `fastmcp` é o único backend suportado; o backend `legacy` foi removido.
 
 ## Contexto Da Task
 
@@ -57,17 +57,10 @@ O projeto foi estruturado para viver como um repositório próprio no GitHub.
 
 - O codigo-fonte vive sob `kwikledgers_langgraph/`.
 - A validacao basica vive sob `tests/`.
-- O runtime legado da KwikLedgers e opcional e entra apenas por adapters de
-	compatibilidade.
-- Os adapters legados nao dependem mais de um caminho fixo do monorepo; eles
-	aceitam configuracao explicita por variaveis de ambiente.
+- O unico backend de integracao e o `fastmcp` (`kwikledgers_fastmcp`).
 
-Variaveis de ambiente suportadas para compatibilidade com o runtime legado:
+Variaveis de ambiente suportadas:
 
-- `KWIKLEDGERS_MCP_SERVERS_PATH`: caminho absoluto para o diretorio
-	`agent/mcp_servers` do workspace legado.
-- `KWIKLEDGERS_LEGACY_ROOT`: caminho absoluto para o root do workspace legado;
-	o adapter resolve `agent/mcp_servers` a partir dele.
 - `KWIKLEDGERS_USER_EMAIL`: email explicito do usuario atual para o seam de identidade do runtime novo.
 - `KWIKLEDGERS_USER_DISPLAY_NAME`: nome exibido do usuario atual quando a identidade for resolvida por ambiente.
 
@@ -82,7 +75,7 @@ Tracking nativo:
 
 - `kwikledgers_langgraph/state.py`: contrato tipado do estado compartilhado
 - `kwikledgers_langgraph/adapters.py`: portas/protocolos para integracoes
-- `kwikledgers_langgraph/legacy_adapters.py`: adapters de compatibilidade com o runtime atual
+- `kwikledgers_langgraph/fastmcp_adapters.py`: adapters das capabilities nativas do FastMCP
 - `kwikledgers_langgraph/guardrails.py`: gates explicitos de aprovacao e classificacao de operacoes
 - `kwikledgers_langgraph/observability.py`: correlation ID, run ID e timeline da execucao
 - `kwikledgers_langgraph/graphs/mutable_flow.py`: seam compartilhado para fluxos mutaveis preview-first
@@ -150,7 +143,7 @@ inclusive quando chamada por consumidores que não selecionam um backend.
 
 O hook de conclusão exige testes aprovados, evidência separada de trabalho e
 evento da mesma sessão. Usa o horário registrado da conclusão e bloqueia sessões
-de implementação somente local. O hook resolve tracking sem importar o legado
+de implementação somente local. O hook resolve tracking sem importar runtimes externos
 e bloqueia journals incompletos. Escritas aprovadas em outros fluxos usam revisão
 nativa e journal durável; resultados desconhecidos exigem reconciliação.
 
@@ -168,7 +161,7 @@ poetry run python -m unittest discover -s tests
 O projeto usa um único ambiente Poetry (Python 3.11+) que já inclui
 `langgraph-cli[inmem]` como dependência declarada em `pyproject.toml`. O
 Studio local sobe direto pelo mesmo `.venv` do projeto, sem venv separado,
-e usa apenas ports mockados (nunca os adapters legados reais) definidos em
+e usa apenas ports mockados (nunca os adapters reais) definidos em
 `kwikledgers_langgraph/dev_studio.py`.
 
 Passos:
@@ -181,7 +174,7 @@ poetry run langgraph dev
 Isso sobe um servidor local com os grafos declarados em `langgraph.json`
 (`daily_summary`, `story_pull_request`, `story_branch_association`,
 `story_status_transition`), usando ports mockados definidos em
-`kwikledgers_langgraph/dev_studio.py` (nunca os adapters legados reais).
+`kwikledgers_langgraph/dev_studio.py` (nunca os adapters reais).
 O terminal mostra a URL do Studio (`https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8123`)
 para abrir a UI interativa no navegador.
 
@@ -197,7 +190,7 @@ flowchart TD
 	F --> G[Hardening de preview e execute com testes de erro]
 	G --> H[Observabilidade minima em AI_Tracking para kl_observatory]
 	H --> I[Observabilidade estruturada com spans e eventos ricos]
-	E --> J[Preview de status com revisao nativa do MCP legado]
+	E --> J[Preview de status com revisao nativa do MCP]
 
 	classDef done fill:#1f7a1f,stroke:#9be29b,color:#f4fff4,stroke-width:2px;
 	classDef pending fill:#7a1f1f,stroke:#ff9b9b,color:#fff4f4,stroke-width:2px;
@@ -209,15 +202,10 @@ flowchart TD
 - Verde: slices implementados e validados.
 - Vermelho: backlog restante relevante.
 
-Para executar com compatibilidade legada, o runtime novo importa os servidores
-atuais apenas como adapters e sem modificar nenhum arquivo do runtime legado.
-
-Exemplo:
+Exemplo de execucao:
 
 ```bash
-export KWIKLEDGERS_LEGACY_ROOT=/path/to/legacy/workspace
-poetry install --extras legacy
-poetry run kwikledgers-langgraph --backend legacy --disable-notifications
+poetry run kwikledgers-langgraph --backend fastmcp --disable-notifications
 ```
 
 ## Guardrails e observabilidade
@@ -363,7 +351,7 @@ sem perder o contrato enxuto de preview, tracking e timeline.
 
 ## Processos de Lifecycle
 
-Os novos processos são isolados dos builders e CLIs legados. Nenhum backend
+Os novos processos são isolados dos builders e CLIs existentes. Nenhum backend
 Azure, git, FastMCP ou executor de código está conectado automaticamente.
 As CLIs operacionais recebem configuração e planos explícitos do operador.
 Os testes locais passaram; mocks não comprovam paridade operacional externa.

@@ -20,7 +20,7 @@ Execute the backlog in this order unless the user explicitly reprioritizes it.
 ### P1
 
 - Adicionar o fluxo preview-first de associação de branch da story.
-  Critério mínimo: criar contrato em `state.py`, porta em `adapters.py`, adapter legado, grafo `validate -> preview -> gate -> execute/stop`, builder em `runtime.py`, CLI dedicada e testes do caminho sem aprovação, com aprovação e parada limpa.
+  Critério mínimo: criar contrato em `state.py`, porta em `adapters.py`, adapter FastMCP, grafo `validate -> preview -> gate -> execute/stop`, builder em `runtime.py`, CLI dedicada e testes do caminho sem aprovação, com aprovação e parada limpa.
 - Adicionar o fluxo preview-first de transição de status da story.
   Critério mínimo: repetir a mesma superfície do fluxo de PR, com `request_id` vinculado ao preview e retomada explícita via estado salvo.
 - Extrair um seam compartilhado para fluxos mutáveis preview-first.
@@ -31,8 +31,8 @@ Execute the backlog in this order unless the user explicitly reprioritizes it.
 - Integrar observabilidade do runtime com um destino externo do stack da KwikLedgers, como `kl_observatory`, OpenTelemetry ou LangSmith.
 - Normalizar melhor a política de payload mínimo em preview, tracking e timeline.
   Foco: persistir só os campos operacionais necessários para retomada, auditoria e troubleshooting.
-- Expandir testes dos adapters legados com cenários de erro e payload inválido.
-  Cobrir pelo menos: JSON inválido, payload raiz não-dict, falha ao localizar `agent/mcp_servers` e erro propagado do legado.
+- Expandir testes dos adapters FastMCP com cenários de erro e payload inválido.
+  Cobrir pelo menos: JSON inválido, payload raiz não-dict, e erro propagado do FastMCP.
 - Cobrir o caminho de erro dos grafos mutáveis quando o adapter de preview ou execute falha.
   Hoje a suíte cobre principalmente payload inválido e approval gate, mas ainda não trata falhas reais do adapter.
 
@@ -47,7 +47,7 @@ Execute the backlog in this order unless the user explicitly reprioritizes it.
 - Mantenha os slices pequenos, validados e focados.
 - Trabalhe em um slice por vez. Não abra o próximo antes de validar e encerrar o atual.
 - Para fluxos mutáveis, preserve o desenho `validate -> preview -> gate -> execute/stop`.
-- Siga a sequência canônica de arquivos quando aplicável: `state.py`, `adapters.py`, `legacy_adapters.py`, `graphs/`, `runtime.py`, CLI dedicada e `tests/`.
+- Siga a sequência canônica de arquivos quando aplicável: `state.py`, `adapters.py`, `fastmcp_adapters.py`, `graphs/`, `runtime.py`, CLI dedicada e `tests/`.
 - Trate como lacunas concretas atuais: ausência de porta específica para associação de branch, ausência de porta específica para transição de status, `runtime.py` compilando apenas `daily_summary` e `story_pull_request`, ausência de CLI além da de PR e ausência de grafos mutáveis além de `story_pull_request`.
 
 ## Slice Completion Gate

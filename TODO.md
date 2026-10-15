@@ -4,7 +4,7 @@ Backlog operacional do `kwikledgers_langgraph/`.
 
 ## Estado Atual
 
-- `fastmcp` é o backend padrão; `legacy` é rollback explícito temporário.
+- `fastmcp` é o único backend; o backend `legacy` foi removido.
 - As 30 capacidades originais são nativas no FastMCP. O catálogo LangGraph
   separa 12 leituras, duas prévias, nove ações atômicas aprovadas e sete rotas de lifecycle.
 - Imports neutros foram adicionados pelo fluxo principal.
