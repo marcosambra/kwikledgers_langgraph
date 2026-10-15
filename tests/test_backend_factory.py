@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import unittest
 from unittest.mock import patch
 
 from kwikledgers_langgraph.backend_factory import (
     BACKEND_ENV_VAR,
     FASTMCP_BACKEND,
-    LEGACY_BACKEND,
     BackendSelectionError,
     build_daily_summary_ports,
     build_day_end_closure_ports,
@@ -25,50 +22,38 @@ from kwikledgers_langgraph.fastmcp_adapters import (
     FastMCPStoryBranchAssociationAdapter, FastMCPStoryPullRequestAdapter,
     FastMCPStoryStatusTransitionAdapter, FastMCPTaskClosureAdapter, FastMCPTrackingSyncAdapter,
 )
-from kwikledgers_langgraph.legacy_adapters import LegacyNotificationAdapter
 from kwikledgers_langgraph.runtime_adapters import NoOpNotificationAdapter
 
 
 class BackendFactoryTestCase(unittest.TestCase):
-    def test_day_end_factory_supports_native_reads_and_explicit_rollback(self) -> None:
+    def test_day_end_factory_supports_native_reads(self) -> None:
         client = object()
         native = build_day_end_closure_ports(backend_name=FASTMCP_BACKEND, client=client)
         self.assertIsInstance(native.day_end, FastMCPDayEndClosureAdapter)
         self.assertIs(native.day_end.client, client)
-        legacy = build_day_end_closure_ports(backend_name=LEGACY_BACKEND)
-        self.assertEqual(type(legacy.day_end).__name__, "LegacyDayEndClosureAdapter")
+        with self.assertRaises(BackendSelectionError):
+            build_day_end_closure_ports(backend_name="legacy")
         with self.assertRaises(BackendSelectionError):
             build_day_end_closure_ports(backend_name="unknown")
-
-    def test_native_cli_import_does_not_load_legacy_adapters(self) -> None:
-        result = subprocess.run([
-            sys.executable, "-c",
-            "import sys; import kwikledgers_langgraph.day_end_closure_cli; "
-            "from kwikledgers_langgraph.backend_factory import build_day_end_closure_ports; "
-            "build_day_end_closure_ports(backend_name='fastmcp'); "
-            "assert 'kwikledgers_langgraph.legacy_adapters' not in sys.modules",
-        ], capture_output=True, text=True, timeout=20)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_resolve_backend_name_defaults_to_fastmcp(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(resolve_backend_name(), FASTMCP_BACKEND)
 
     def test_resolve_backend_name_reads_environment_override(self) -> None:
-        with patch.dict(os.environ, {BACKEND_ENV_VAR: LEGACY_BACKEND}, clear=False):
-            self.assertEqual(resolve_backend_name(), LEGACY_BACKEND)
+        with patch.dict(os.environ, {BACKEND_ENV_VAR: " FastMCP "}, clear=False):
+            self.assertEqual(resolve_backend_name(), FASTMCP_BACKEND)
+
+    def test_resolve_backend_name_rejects_removed_legacy_backend(self) -> None:
+        with self.assertRaises(BackendSelectionError):
+            resolve_backend_name("legacy")
 
     def test_resolve_backend_name_rejects_unknown_backend(self) -> None:
         with self.assertRaises(BackendSelectionError):
             resolve_backend_name("unknown")
 
-    def test_build_daily_summary_ports_uses_legacy_notification_adapter_when_enabled(self) -> None:
-        ports = build_daily_summary_ports(backend_name=LEGACY_BACKEND, notifications_enabled=True)
-
-        self.assertIsInstance(ports.notifications, LegacyNotificationAdapter)
-
     def test_build_daily_summary_ports_uses_noop_notification_adapter_when_disabled(self) -> None:
-        ports = build_daily_summary_ports(backend_name=LEGACY_BACKEND, notifications_enabled=False)
+        ports = build_daily_summary_ports(backend_name=FASTMCP_BACKEND, notifications_enabled=False, client=object())
 
         self.assertIsInstance(ports.notifications, NoOpNotificationAdapter)
 
@@ -91,7 +76,7 @@ class BackendFactoryTestCase(unittest.TestCase):
         ports = build_daily_summary_ports(backend_name=FASTMCP_BACKEND, notifications_enabled=False, client=object())
         self.assertIsInstance(ports.notifications, NoOpNotificationAdapter)
 
-    def test_all_five_other_factories_support_fastmcp_and_preserve_legacy(self) -> None:
+    def test_all_five_other_factories_support_fastmcp(self) -> None:
         client = object()
         for builder, attribute, expected in (
             (build_story_pull_request_ports, "pull_requests", FastMCPStoryPullRequestAdapter),
@@ -104,8 +89,6 @@ class BackendFactoryTestCase(unittest.TestCase):
                 adapter = getattr(builder(backend_name=FASTMCP_BACKEND, client=client), attribute)
                 self.assertIsInstance(adapter, expected)
                 self.assertIs(adapter.client, client)
-                legacy = getattr(builder(backend_name=LEGACY_BACKEND), attribute)
-                self.assertTrue(type(legacy).__name__.startswith("Legacy"))
                 with self.assertRaises(BackendSelectionError):
                     builder(backend_name="unknown", client=client)
 

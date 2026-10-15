@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timezone", default=None, help="Fuso IANA. Padrao: fuso local.")
     parser.add_argument("--dry-run", action="store_true", help="Gera o preview sem escrever no Azure.")
     parser.add_argument("--no-continuation", action="store_true", help="Nao cria a task de continuacao.")
-    parser.add_argument("--backend", default=None, help="Backend fastmcp (padrão) ou rollback legacy explícito.")
+    parser.add_argument("--backend", default=None, help="Backend de integração do runtime. Apenas 'fastmcp' é suportado.")
     parser.add_argument("--notify", action="store_true", help="Envia notificacao com o resultado.")
     parser.add_argument("--save-state-file", default=None, help="Grava o estado final em JSON.")
     parser.add_argument("--print-state", action="store_true", help="Imprime o estado final completo em JSON.")

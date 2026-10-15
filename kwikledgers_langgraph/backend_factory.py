@@ -22,9 +22,8 @@ from kwikledgers_langgraph.runtime_adapters import (
 )
 
 
-LEGACY_BACKEND = "legacy"
 FASTMCP_BACKEND = "fastmcp"
-SUPPORTED_BACKENDS = (LEGACY_BACKEND, FASTMCP_BACKEND)
+SUPPORTED_BACKENDS = (FASTMCP_BACKEND,)
 BACKEND_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_BACKEND"
 
 
@@ -35,10 +34,6 @@ class BackendSelectionError(RuntimeError):
 def build_day_end_closure_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
 ) -> DayEndClosurePorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacyDayEndClosureAdapter
-
-        return DayEndClosurePorts(day_end=LegacyDayEndClosureAdapter())
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPDayEndClosureAdapter
 
@@ -61,19 +56,6 @@ def build_daily_summary_ports(
     *, backend_name: str, notifications_enabled: bool, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> DailySummaryPorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import (
-            LegacyDailySummaryProvider, LegacyNotificationAdapter, LegacyTrackingSyncAdapter,
-        )
-
-        notifications = LegacyNotificationAdapter() if notifications_enabled else NoOpNotificationAdapter()
-        return DailySummaryPorts(
-            identity=EnvironmentIdentityResolverAdapter(),
-            provider=LegacyDailySummaryProvider(),
-            tracking=LegacyTrackingSyncAdapter(),
-            notifications=notifications,
-        )
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import (
             FastMCPDailySummaryProvider, FastMCPNotificationAdapter, FastMCPTrackingSyncAdapter,
@@ -96,11 +78,6 @@ def build_story_pull_request_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryPullRequestPorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacyStoryPullRequestAdapter
-
-        return StoryPullRequestPorts(pull_requests=LegacyStoryPullRequestAdapter())
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryPullRequestAdapter
 
@@ -115,11 +92,6 @@ def build_story_branch_association_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryBranchAssociationPorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacyStoryBranchAssociationAdapter
-
-        return StoryBranchAssociationPorts(branches=LegacyStoryBranchAssociationAdapter())
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryBranchAssociationAdapter
 
@@ -134,11 +106,6 @@ def build_story_status_transition_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> StoryStatusTransitionPorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacyStoryStatusTransitionAdapter
-
-        return StoryStatusTransitionPorts(statuses=LegacyStoryStatusTransitionAdapter())
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryStatusTransitionAdapter
 
@@ -153,11 +120,6 @@ def build_task_closure_ports(
     *, backend_name: str, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
 ) -> TaskClosurePorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacyTaskClosureAdapter
-
-        return TaskClosurePorts(closures=LegacyTaskClosureAdapter())
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPTaskClosureAdapter
 
@@ -169,11 +131,6 @@ def build_task_closure_ports(
 
 
 def build_sprint_stories_ports(*, backend_name: str, client: CapabilityClient | None = None) -> SprintStoriesPorts:
-    if backend_name == LEGACY_BACKEND:
-        from kwikledgers_langgraph.legacy_adapters import LegacySprintStoriesProvider
-
-        return SprintStoriesPorts(stories=LegacySprintStoriesProvider())
-
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import FastMCPSprintStoriesProvider
 

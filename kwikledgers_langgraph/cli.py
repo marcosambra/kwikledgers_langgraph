@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend",
         default=None,
-        help="Backend de integracao do runtime. O padrao e 'fastmcp'; use 'legacy' apenas para rollback temporario.",
+        help="Backend de integracao do runtime. Apenas 'fastmcp' e suportado.",
     )
     parser.add_argument(
         "--disable-notifications",

@@ -17,7 +17,6 @@ from kwikledgers_langgraph.adapters import DayEndClosurePorts
 from kwikledgers_langgraph.day_end_closure_policy import build_day_end_preview, parse_daily_log_entries
 from kwikledgers_langgraph.day_end_closure_cli import main as run_day_end_cli
 from kwikledgers_langgraph.observability import build_observability_context
-from kwikledgers_langgraph.legacy_adapters import LegacyDayEndClosureAdapter
 from kwikledgers_langgraph.task_completion_hook import completed_task_ids
 from kwikledgers_langgraph.task_completion_hook import main as run_completion_hook
 import io
@@ -48,7 +47,7 @@ def _context(tasks: list[dict[str, Any]], log: str = LOG) -> dict[str, Any]:
 
 
 class DayEndEntryPointTestCase(unittest.TestCase):
-    def test_cli_defaults_to_backend_selection_without_forcing_legacy(self) -> None:
+    def test_cli_defaults_to_backend_selection_without_forcing_a_backend(self) -> None:
         state = {"day_end_closure_result": {"status": "skipped", "reason": "no_activity", "changed": False}}
         with patch("kwikledgers_langgraph.day_end_closure_cli.run_day_end_closure", return_value=state) as run, patch("sys.stdout", io.StringIO()):
             self.assertEqual(run_day_end_cli(["--disable-observability-sync"]), 0)
@@ -131,34 +130,6 @@ class DayEndPolicyTestCase(unittest.TestCase):
         self.assertEqual(preview["computed_hours"], 5)
         self.assertEqual(preview["completed_work_hours"], 6.0)
         self.assertEqual(preview["continuation"]["title"], "Backend (continuação)")
-
-    def test_atomic_close_is_not_replayed(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            wit = Mock()
-            wit.get_work_item.return_value = SimpleNamespace(rev=4, fields={
-                "System.State": "Active", "System.WorkItemType": "Task",
-                "System.AssignedTo": {"uniqueName": "dev@example.com"},
-            })
-            azure = ModuleType("azure_devops.server")
-            azure.get_client = Mock(return_value=SimpleNamespace(clients=SimpleNamespace(get_work_item_tracking_client=lambda: wit)))
-            azure._resolve_active_user_email = lambda: "dev@example.com"
-            tracking = ModuleType("local_tracking.server")
-            tracking.TRACKING_DIR = Path(temp_dir)
-            tracking._append_daily_action_log = Mock()
-            modules = {"azure_devops": SimpleNamespace(server=azure), "local_tracking": SimpleNamespace(server=tracking)}
-            preview = build_day_end_preview({**REQUEST, "create_continuation": False}, _context([TASK]))
-            preview.update(expected_revision=4, assigned_to="dev@example.com")
-            adapter = LegacyDayEndClosureAdapter()
-            with patch.dict(sys.modules, modules), patch("kwikledgers_langgraph.legacy_adapters._ensure_legacy_import_path"):
-                result = adapter.execute_day_end_closure({"preview": preview})
-                self.assertEqual(result["status"], "closed")
-                with self.assertRaises(RuntimeError):
-                    adapter.execute_day_end_closure({"preview": preview})
-            wit.update_work_item.assert_called_once()
-            document = wit.update_work_item.call_args.kwargs["document"]
-            self.assertEqual(document[0], {"op": "test", "path": "/rev", "value": 4})
-            self.assertIn({"op": "add", "path": "/fields/System.State", "value": "Closed"}, document)
-            self.assertFalse(any("RemainingWork" in operation["path"] for operation in document))
 
     def test_skips_without_human_activity(self) -> None:
         log = "### 2026-10-05 12:00:00Z - Resumo\nFonte: task-scheduler\n"
@@ -250,7 +221,7 @@ class DayEndGraphTestCase(unittest.TestCase):
         runtime = build_day_end_closure_graph(DayEndClosurePorts(day_end=adapter))
         return runtime.invoke({
             "tracking_events": [],
-            "observability": build_observability_context(flow_name="day_end_closure", source="test", backend_name="legacy"),
+            "observability": build_observability_context(flow_name="day_end_closure", source="test", backend_name="fastmcp"),
             "day_end_closure_request": {**REQUEST, **request},
         })
 

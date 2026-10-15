@@ -34,10 +34,6 @@ class ApprovalRequiredError(RuntimeError):
     """Raised when a guarded operation requires explicit approval."""
 
 
-def is_legacy_backend(state: AgentState) -> bool:
-    return str(dict(state.get("observability", {})).get("backend_name") or "fastmcp").strip().lower() == "legacy"
-
-
 def _preview_digest(preview: dict[str, Any]) -> str:
     return sha256(json.dumps(preview, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
@@ -72,12 +68,6 @@ def load_resume_confirmation(
     if backend_name != saved_backend:
         raise ValueError("O backend solicitado não corresponde ao preview salvo.")
     pending = dict(state.get("pending_approval", {}))
-    if backend_name == "legacy":
-        if not approval_request_id or approval_request_id != pending.get("request_id"):
-            raise ValueError("Informe '--approval-request-id' correspondente ao preview legado.")
-        return build_approval_confirmation(
-            request_id=approval_request_id, approved=True, approval_source=approval_source,
-        )
     if not receipt_file:
         if ("backend_name" not in observability
                 and not any(field in pending for field in ("preview_digest", "previewed_at", "receipt"))
@@ -122,9 +112,8 @@ def build_bound_approval(
     active_run_id = observability.get("active_run_id")
     if active_run_id:
         approval["run_id"] = active_run_id
-    if not is_legacy_backend(state):
-        approval["preview_digest"] = _preview_digest(approval["preview"])
-        approval["previewed_at"] = datetime.now(timezone.utc).isoformat()
+    approval["preview_digest"] = _preview_digest(approval["preview"])
+    approval["previewed_at"] = datetime.now(timezone.utc).isoformat()
     return approval
 
 
@@ -170,15 +159,11 @@ def evaluate_operation(
         same_run = pending.get("run_id") == observability.get("active_run_id")
         replay_ready = bool(state.get("approval_resume_ready"))
         matching_request = pending.get("request_id") if same_action and same_preview and same_run else None
-        if is_legacy_backend(state):
-            same_request = bool(matching_request and confirmation.get("request_id") == matching_request)
-            approved = bool(replay_ready and same_request and confirmation.get("approved") is True)
-        else:
-            approved = bool(replay_ready and matching_request and verify_signed_approval(pending, confirmation))
+        approved = bool(replay_ready and matching_request and verify_signed_approval(pending, confirmation))
         if confirmation and not approved:
             reason = "approval_context_mismatch"
         elif approved:
-            reason = "approved_by_state" if is_legacy_backend(state) else "approved_by_signed_receipt"
+            reason = "approved_by_signed_receipt"
         else:
             reason = "explicit_approval_required"
     else:
@@ -198,7 +183,7 @@ def evaluate_operation(
                 approval_source=approval_source,
             )
         updates["pending_approval"].pop("receipt", None)
-        if approved and not is_legacy_backend(state):
+        if approved:
             updates["pending_approval"]["receipt"] = confirmation
 
     decision = append_decision(state, f"guardrail.{action}.{reason}")

@@ -10,10 +10,7 @@ from kwikledgers_langgraph.guardrails import (
     ApprovalRequiredError,
     OperationKind,
     allow_without_approval,
-    build_approval_confirmation,
-    build_bound_approval,
     evaluate_operation,
-    is_legacy_backend,
     require_signed_execution_approval,
 )
 from kwikledgers_langgraph.observability import record_runtime_event
@@ -106,7 +103,7 @@ def run_preview_step(
             "story_status_transition.preview": "update_story_status",
             "task_closure.preview": "update_work_item_effort",
         }.get(action)
-        if capability_name and not is_legacy_backend(state) and preview.get("closure_allowed") is not False:
+        if capability_name and preview.get("closure_allowed") is not False:
             preview = {
                 **preview,
                 "execution_arguments": technical_arguments_for_capability(
@@ -177,30 +174,8 @@ def run_mutation_gate(
     approved_message: str,
 ) -> dict[str, Any]:
     preview = dict(state.get(preview_key, {}))
-    evaluation_state: AgentState = state
-    simulation_updates: dict[str, Any] = {}
-    if state.get("approval_simulation_requested") and is_legacy_backend(state):
-        simulated_pending = build_bound_approval(
-            state,
-            action=action,
-            preview=preview,
-            approved=False,
-            approval_source="local_cli_simulation",
-        )
-        simulation_updates["pending_approval"] = simulated_pending
-        evaluation_state = {
-            **state,
-            "pending_approval": simulated_pending,
-            "approval_confirmation": build_approval_confirmation(
-                request_id=simulated_pending["request_id"],
-                approved=True,
-                approval_source="local_cli_simulation",
-            ),
-            "approval_resume_ready": True,
-        }
-
     updates = evaluate_operation(
-        evaluation_state,
+        state,
         action=action,
         operation_kind=OperationKind.AZURE_MUTATION,
         preview=preview,
@@ -220,7 +195,6 @@ def run_mutation_gate(
         message=message,
     )
     return {
-        **simulation_updates,
         **updates,
         **event,
         **runtime_event,
@@ -259,8 +233,7 @@ def run_execute_step(
     try:
         effective_request = request_builder(request, state) if request_builder is not None else dict(request)
         effective_request.pop("execution_capability", None)
-        backend_name = str(dict(state.get("observability", {})).get("backend_name") or "fastmcp").strip().lower()
-        if backend_name != "legacy" and fastmcp_capability_name:
+        if fastmcp_capability_name:
             require_signed_execution_approval(state, action=approval_action or node)
             approved_preview = dict(state["pending_approval"]["preview"])
             arguments = technical_arguments_for_capability(fastmcp_capability_name, effective_request)

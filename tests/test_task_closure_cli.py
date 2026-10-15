@@ -190,52 +190,6 @@ class TaskClosureCliTestCase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_task_closure(arguments)
 
-    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
-        saved_state = {
-            "task_closure_request": {"task_id": 120310, "start_time": "2026-07-10T11:00:00+00:00"},
-            "task_closure_preview": {
-                "task_id": 120310,
-                "computed_hours": 2,
-                "completed_work_hours": 2.0,
-                "remaining_work_hours": None,
-                "closure_allowed": True,
-                "validation_messages": [],
-            },
-            "pending_approval": {
-                "action": "task_closure.execute",
-                "preview": {
-                    "task_id": 120310,
-                    "computed_hours": 2,
-                    "completed_work_hours": 2.0,
-                    "remaining_work_hours": None,
-                    "closure_allowed": True,
-                    "validation_messages": [],
-                },
-                "approved": False,
-                "request_id": "req-456",
-                "run_id": "run-456",
-                "approval_source": "pending_review",
-            },
-            "observability": {
-                "active_run_id": "run-456",
-                "flow_name": "task_closure",
-                "backend_name": "legacy",
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/saved-state.json"
-            _write_state_file(saved_state, state_file)
-
-            with self.assertRaises(RuntimeError):
-                _build_runtime_state(
-                    _build_arguments(
-                        resume_state_file=state_file,
-                        approval_request_id="req-456",
-                        backend="fastmcp",
-                    )
-                )
-
     def test_main_writes_state_file_when_requested(self) -> None:
         result = {
             "task_closure_result": {"status": "approval_required"},
@@ -263,31 +217,6 @@ class TaskClosureCliTestCase(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-456")
         self.assertIn("signature", saved_state)
-
-    @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph nao esta instalado neste ambiente")
-    def test_run_task_closure_replays_saved_state_and_executes_after_human_approval(self) -> None:
-        adapter = FakeTaskClosureAdapter()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/preview-state.json"
-            with patch(
-                "kwikledgers_langgraph.task_closure_cli.build_task_closure_ports",
-                return_value=TaskClosurePorts(closures=adapter),
-            ):
-                preview_result = run_task_closure(_build_arguments(backend="legacy"))
-                _write_state_file(preview_result, state_file)
-
-                resume_result = run_task_closure(
-                    _build_arguments(
-                        backend="legacy",
-                        resume_state_file=state_file,
-                        approval_request_id=preview_result["pending_approval"]["request_id"],
-                    )
-                )
-
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertEqual(resume_result["task_closure_result"]["status"], "closed")
-
 
 if __name__ == "__main__":
     unittest.main()

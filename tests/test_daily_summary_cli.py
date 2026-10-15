@@ -66,13 +66,13 @@ class DailySummaryCliTestCase(unittest.TestCase):
 
         with patch("kwikledgers_langgraph.cli.run_daily_summary", return_value=result) as run_daily_summary_mock:
             with patch("kwikledgers_langgraph.cli._record_runtime_observability"):
-                exit_code = main(["--backend", "legacy", "--disable-notifications"])
+                exit_code = main(["--backend", "fastmcp", "--disable-notifications"])
 
         self.assertEqual(exit_code, 0)
         run_daily_summary_mock.assert_called_once_with(
             source="langgraph-cli",
             notifications_enabled=False,
-            backend_name="legacy",
+            backend_name="fastmcp",
         )
 
 

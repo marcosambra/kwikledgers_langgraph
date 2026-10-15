@@ -183,52 +183,6 @@ class StoryStatusCliTestCase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_story_status_transition(arguments)
 
-    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
-        saved_state = {
-            "story_status_request": {"story_id": 120204, "target_status": "Aguardando PR"},
-            "story_status_preview": {
-                "story_id": 120204,
-                "current_status": "Desenvolvimento",
-                "target_status": "Aguardando PR",
-                "transition_allowed": True,
-                "validation_messages": [],
-                "story_revision": "rev-1",
-            },
-            "pending_approval": {
-                "action": "story_status_transition.execute",
-                "preview": {
-                    "story_id": 120204,
-                    "current_status": "Desenvolvimento",
-                    "target_status": "Aguardando PR",
-                    "transition_allowed": True,
-                    "validation_messages": [],
-                    "story_revision": "rev-1",
-                },
-                "approved": False,
-                "request_id": "req-123",
-                "run_id": "run-123",
-                "approval_source": "pending_review",
-            },
-            "observability": {
-                "active_run_id": "run-123",
-                "flow_name": "story_status_transition",
-                "backend_name": "legacy",
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/saved-state.json"
-            _write_state_file(saved_state, state_file)
-
-            with self.assertRaises(RuntimeError):
-                _build_runtime_state(
-                    _build_arguments(
-                        resume_state_file=state_file,
-                        approval_request_id="req-123",
-                        backend="fastmcp",
-                    )
-                )
-
     def test_main_writes_state_file_when_requested(self) -> None:
         result = {
             "story_status_result": {"status": "approval_required"},
@@ -256,33 +210,6 @@ class StoryStatusCliTestCase(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-123")
         self.assertIn("signature", saved_state)
-
-    @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph nao esta instalado neste ambiente")
-    def test_run_story_status_transition_replays_saved_state_and_executes_after_human_approval(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/preview-state.json"
-            with patch(
-                "kwikledgers_langgraph.story_status_cli.build_story_status_transition_ports",
-                return_value=StoryStatusTransitionPorts(statuses=adapter),
-            ):
-                preview_result = run_story_status_transition(_build_arguments(backend="legacy"))
-                _write_state_file(preview_result, state_file)
-
-                resume_result = run_story_status_transition(
-                    _build_arguments(
-                        backend="legacy",
-                        resume_state_file=state_file,
-                        approval_request_id=preview_result["pending_approval"]["request_id"],
-                    )
-                )
-
-        self.assertEqual(preview_result["story_status_result"]["status"], "approval_required")
-        self.assertEqual(len(adapter.preview_calls), 2)
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertEqual(resume_result["story_status_result"]["status"], "updated")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -422,7 +422,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                         ))
         self.assertEqual(client.executions, [])
 
-    def test_saved_default_backend_cannot_downgrade_to_legacy(self) -> None:
+    def test_resume_rejects_removed_legacy_backend(self) -> None:
         client = VerifyingClient()
         for runtime, prefix, request, _capability, cli in self.cases(client):
             with self.subTest(flow=prefix), TemporaryDirectory() as directory:

@@ -260,12 +260,6 @@ def resolve_ai_tracking_root(explicit_root: str | Path | None = None) -> Path:
             return candidate
         raise RuntimeError("A variavel KWIKLEDGERS_AI_TRACKING_ROOT nao aponta para um diretorio valido.")
 
-    explicit_legacy_root = os.environ.get("KWIKLEDGERS_LEGACY_ROOT")
-    if explicit_legacy_root:
-        candidate = Path(explicit_legacy_root).expanduser().resolve() / "AI_Tracking"
-        if candidate.is_dir():
-            return candidate
-
     current = Path(__file__).resolve()
     for parent in current.parents:
         candidate = parent / "AI_Tracking"

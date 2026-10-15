@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--backend",
         default=None,
-        help="Backend de integracao do runtime. O padrao atual e 'legacy'.",
+        help="Backend de integracao do runtime. Apenas 'fastmcp' e suportado.",
     )
     parser.add_argument(
         "--print-state",

@@ -23,7 +23,7 @@ DAILY_SUMMARY_INPUT_SCHEMA: dict[str, Any] = {
         },
         "backend": {
             "type": "string",
-            "description": "Backend de integracao do runtime. O padrao atual e 'legacy'.",
+            "description": "Backend de integracao do runtime. Apenas 'fastmcp' e suportado.",
         },
     },
     "additionalProperties": False,

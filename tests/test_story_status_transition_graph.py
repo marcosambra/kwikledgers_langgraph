@@ -75,7 +75,7 @@ def _base_state() -> dict[str, Any]:
         "observability": build_observability_context(
             flow_name="story_status_transition",
             source="test",
-            backend_name="legacy",
+            backend_name="fastmcp",
         ),
         "story_status_request": {
             "story_id": 120204,
@@ -100,33 +100,6 @@ class StoryStatusTransitionGraphTestCase(unittest.TestCase):
         self.assertEqual(adapter.execute_calls, [])
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_transition")
 
-    def test_invalid_transition_stops_before_gate(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-        state = _base_state()
-        state["story_status_request"]["target_status"] = "QA"
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(adapter.execute_calls, [])
-        self.assertEqual(result["story_status_result"]["status"], "invalid_transition")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_transition")
-
-    def test_preview_without_approval_stops_before_execute(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-
-        result = runtime.invoke(_base_state())
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(adapter.execute_calls, [])
-        self.assertEqual(result["story_status_result"]["status"], "approval_required")
-        self.assertFalse(result["pending_approval"]["approved"])
-        self.assertTrue(result["pending_approval"]["request_id"])
-        self.assertEqual(result["story_status_preview"]["target_status"], "Aguardando PR")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_transition")
-
     def test_preview_adapter_failure_stops_cleanly(self) -> None:
         adapter = FailingPreviewStoryStatusTransitionAdapter()
         runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
@@ -136,97 +109,6 @@ class StoryStatusTransitionGraphTestCase(unittest.TestCase):
         self.assertIn("errors", result)
         self.assertEqual(result["story_status_result"]["status"], "preview_failed")
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_transition")
-
-    def test_replayed_preview_with_matching_confirmation_allows_execute(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-        state = _base_state()
-        preview = adapter.preview_story_status_transition(state["story_status_request"])
-        state["story_status_preview"] = preview
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_status_transition.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 2)
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertEqual(result["story_status_result"]["status"], "updated")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "execute_status_transition")
-
-    def test_preseeded_initial_confirmation_without_preview_replay_still_stops_before_execute(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-        state = _base_state()
-        preview = adapter.preview_story_status_transition(state["story_status_request"])
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_status_transition.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 2)
-        self.assertEqual(adapter.execute_calls, [])
-        self.assertFalse(result["pending_approval"]["approved"])
-        self.assertEqual(result["story_status_result"]["status"], "approval_required")
-
-    def test_local_simulation_flag_allows_execute_after_preview(self) -> None:
-        adapter = FakeStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-        state = _base_state()
-        state["approval_simulation_requested"] = True
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertTrue(result["pending_approval"]["approved"])
-        self.assertEqual(result["pending_approval"]["approval_source"], "local_cli_simulation")
-
-    def test_execute_adapter_failure_sets_failed_result(self) -> None:
-        adapter = FailingExecuteStoryStatusTransitionAdapter()
-        runtime = build_story_status_transition_graph(StoryStatusTransitionPorts(statuses=adapter))
-        state = _base_state()
-        preview = adapter.preview_story_status_transition(state["story_status_request"])
-        state["story_status_preview"] = preview
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_status_transition.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertIn("errors", result)
-        self.assertEqual(result["story_status_result"]["status"], "execute_failed")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "execute_status_transition")
-        self.assertEqual(result["observability"]["timeline"][-1]["status"], "failed")
-
 
 if __name__ == "__main__":
     unittest.main()

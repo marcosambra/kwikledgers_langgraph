@@ -17,12 +17,6 @@ dependencies = [
     "typing-extensions>=4.12,<5.0"
 ]
 
-[project.optional-dependencies]
-legacy = [
-    "azure-devops>=7.1.0b4,<8.0.0",
-    "msrest>=0.7.1,<0.8.0"
-]
-
 [project.scripts]
 kwikledgers-langgraph = "kwikledgers_langgraph.cli:main"
 kwikledgers-langgraph-story-pr = "kwikledgers_langgraph.story_pr_cli:main"

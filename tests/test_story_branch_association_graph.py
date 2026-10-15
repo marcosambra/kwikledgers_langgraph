@@ -52,7 +52,7 @@ def _base_state() -> dict[str, Any]:
         "observability": build_observability_context(
             flow_name="story_branch_association",
             source="test",
-            backend_name="legacy",
+            backend_name="fastmcp",
         ),
         "branch_association_request": {
             "story_id": 120204,
@@ -79,20 +79,6 @@ class StoryBranchAssociationGraphTestCase(unittest.TestCase):
         self.assertEqual(adapter.execute_calls, [])
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_association")
 
-    def test_preview_without_approval_stops_before_execute(self) -> None:
-        adapter = FakeStoryBranchAssociationAdapter()
-        runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
-
-        result = runtime.invoke(_base_state())
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(adapter.execute_calls, [])
-        self.assertEqual(result["branch_association_result"]["status"], "approval_required")
-        self.assertFalse(result["pending_approval"]["approved"])
-        self.assertTrue(result["pending_approval"]["request_id"])
-        self.assertEqual(result["branch_association_preview"]["repository_name"], "accounting")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_association")
-
     def test_preview_adapter_failure_stops_cleanly(self) -> None:
         adapter = FailingPreviewStoryBranchAssociationAdapter()
         runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
@@ -102,109 +88,6 @@ class StoryBranchAssociationGraphTestCase(unittest.TestCase):
         self.assertIn("errors", result)
         self.assertEqual(result["branch_association_result"]["status"], "preview_failed")
         self.assertEqual(result["observability"]["timeline"][-1]["node"], "stop_without_association")
-
-    def test_replayed_preview_with_matching_confirmation_allows_execute(self) -> None:
-        adapter = FakeStoryBranchAssociationAdapter()
-        runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
-        state = _base_state()
-        preview = {
-            "story_id": state["branch_association_request"]["story_id"],
-            "repository_name": state["branch_association_request"]["repository_name"],
-            "work_items": [state["branch_association_request"]["story_id"]],
-        }
-        state["branch_association_preview"] = preview
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_branch_association.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertEqual(result["branch_association_result"]["status"], "associated")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "associate_branch")
-
-    def test_preseeded_initial_confirmation_without_preview_replay_still_stops_before_execute(self) -> None:
-        adapter = FakeStoryBranchAssociationAdapter()
-        runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
-        state = _base_state()
-        preview = {
-            "story_id": state["branch_association_request"]["story_id"],
-            "repository_name": state["branch_association_request"]["repository_name"],
-            "work_items": [state["branch_association_request"]["story_id"]],
-        }
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_branch_association.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(adapter.execute_calls, [])
-        self.assertFalse(result["pending_approval"]["approved"])
-        self.assertEqual(result["branch_association_result"]["status"], "approval_required")
-
-    def test_local_simulation_flag_allows_execute_after_preview(self) -> None:
-        adapter = FakeStoryBranchAssociationAdapter()
-        runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
-        state = _base_state()
-        state["approval_simulation_requested"] = True
-
-        result = runtime.invoke(state)
-
-        self.assertEqual(len(adapter.preview_calls), 1)
-        self.assertEqual(len(adapter.execute_calls), 1)
-        self.assertTrue(result["pending_approval"]["approved"])
-        self.assertEqual(result["pending_approval"]["approval_source"], "local_cli_simulation")
-
-    def test_execute_adapter_failure_sets_failed_result(self) -> None:
-        adapter = FailingExecuteStoryBranchAssociationAdapter()
-        runtime = build_story_branch_association_graph(StoryBranchAssociationPorts(branches=adapter))
-        state = _base_state()
-        preview = {
-            "story_id": state["branch_association_request"]["story_id"],
-            "repository_name": state["branch_association_request"]["repository_name"],
-            "work_items": [state["branch_association_request"]["story_id"]],
-        }
-        state["branch_association_preview"] = preview
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_branch_association.execute",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = runtime.invoke(state)
-
-        self.assertIn("errors", result)
-        self.assertEqual(result["branch_association_result"]["status"], "execute_failed")
-        self.assertEqual(result["observability"]["timeline"][-1]["node"], "associate_branch")
-        self.assertEqual(result["observability"]["timeline"][-1]["status"], "failed")
-
 
 if __name__ == "__main__":
     unittest.main()

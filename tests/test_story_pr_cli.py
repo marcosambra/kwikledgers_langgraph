@@ -184,38 +184,6 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
                     )
                 )
 
-    def test_build_runtime_state_rejects_backend_mismatch_on_resume(self) -> None:
-        saved_state = {
-            "pull_request_request": {"story_id": 120204, "repository_name": "accounting"},
-            "pull_request_preview": {"title": "KL-120204 Draft PR", "story_id": 120204},
-            "pending_approval": {
-                "action": "story_pull_request.create",
-                "preview": {"title": "KL-120204 Draft PR", "story_id": 120204},
-                "approved": False,
-                "request_id": "req-123",
-                "run_id": "run-123",
-                "approval_source": "pending_review",
-            },
-            "observability": {
-                "active_run_id": "run-123",
-                "flow_name": "story_pull_request",
-                "backend_name": "legacy",
-            },
-        }
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/saved-state.json"
-            _write_state_file(saved_state, state_file)
-
-            with self.assertRaises(RuntimeError):
-                _build_runtime_state(
-                    _build_arguments(
-                        resume_state_file=state_file,
-                        approval_request_id="req-123",
-                        backend="fastmcp",
-                    )
-                )
-
     def test_run_story_pull_request_invokes_runtime_with_built_state(self) -> None:
         arguments = _build_arguments()
         runtime = FakeRuntime(result={"pull_request_result": {"status": "approval_required"}})
@@ -274,33 +242,6 @@ class StoryPullRequestCliTestCase(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-123")
         self.assertIn("signature", saved_state)
-
-    @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph nao esta instalado neste ambiente")
-    def test_run_story_pull_request_replays_saved_state_and_creates_after_human_approval(self) -> None:
-        adapter = FakeStoryPullRequestAdapter()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_file = f"{temp_dir}/preview-state.json"
-            with patch(
-                "kwikledgers_langgraph.story_pr_cli.build_story_pull_request_ports",
-                return_value=StoryPullRequestPorts(pull_requests=adapter),
-            ):
-                preview_result = run_story_pull_request(_build_arguments(backend="legacy"))
-                _write_state_file(preview_result, state_file)
-
-                resume_result = run_story_pull_request(
-                    _build_arguments(
-                        backend="legacy",
-                        resume_state_file=state_file,
-                        approval_request_id=preview_result["pending_approval"]["request_id"],
-                    )
-                )
-
-        self.assertEqual(preview_result["pull_request_result"]["status"], "approval_required")
-        self.assertEqual(len(adapter.preview_calls), 2)
-        self.assertEqual(len(adapter.create_calls), 1)
-        self.assertEqual(resume_result["pull_request_result"]["status"], "created")
-
 
 if __name__ == "__main__":
     unittest.main()

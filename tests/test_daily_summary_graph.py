@@ -207,7 +207,7 @@ class DailySummaryGraphTestCase(unittest.TestCase):
         self.assertIn(".", notifications.execution_capability)
 
     def test_notification_exception_preserves_summary_and_tracking(self) -> None:
-        for backend in ("legacy", "fastmcp"):
+        for backend in ("fastmcp",):
             with self.subTest(backend=backend):
                 tracking = FastMCPTrackingAdapter()
                 notifications = FastMCPNotificationAdapter()

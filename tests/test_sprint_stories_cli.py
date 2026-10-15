@@ -22,12 +22,12 @@ class FakeRuntime:
 
 class SprintStoriesCliTestCase(unittest.TestCase):
     def test_build_initial_state_seeds_observability(self) -> None:
-        state = _build_initial_state("test-source", "legacy")
+        state = _build_initial_state("test-source", "fastmcp")
 
         self.assertEqual(state["source"], "test-source")
         self.assertEqual(state["sprint_stories_request"], {})
         self.assertEqual(state["observability"]["flow_name"], "sprint_stories")
-        self.assertEqual(state["observability"]["backend_name"], "legacy")
+        self.assertEqual(state["observability"]["backend_name"], "fastmcp")
 
     def test_run_sprint_stories_invokes_runtime_with_built_state(self) -> None:
         runtime = FakeRuntime(result={"sprint_stories_result": {"counts": {"total_stories": 2}}})

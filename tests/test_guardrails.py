@@ -103,42 +103,5 @@ class GuardrailsTestCase(unittest.TestCase):
             "explicit_approval_required",
         )
 
-    def test_confirmation_for_same_request_allows_mutation(self) -> None:
-        state = {
-            "observability": build_observability_context(
-                flow_name="story_pull_request",
-                source="test",
-                backend_name="legacy",
-            ),
-            "approval_resume_ready": True,
-        }
-        preview = {"title": "Draft PR"}
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_pull_request.create",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = evaluate_operation(
-            state,
-            action="story_pull_request.create",
-            operation_kind=OperationKind.AZURE_MUTATION,
-            preview=preview,
-        )
-
-        self.assertTrue(result["pending_approval"]["approved"])
-        self.assertEqual(
-            result["tracking_events"][-1]["payload"]["reason"],
-            "approved_by_state",
-        )
-
-
 if __name__ == "__main__":
     unittest.main()
