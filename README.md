@@ -77,6 +77,12 @@ o hook pode registrar a execução externa, mas não há garantia de exportaçã
 nós internos. Novos hooks precisam ser carregados pela sessão do editor;
 instalar uma extensão não comprova que o host de agentes os carregou.
 
+O cliente propaga o contexto explícito por MCP `_meta` usando o contrato
+`kwikledgers/context` versão `1`, sem misturá-lo ao payload aprovado.
+`KWIKLEDGERS_WORKSPACE_ID`, `KWIKLEDGERS_SESSION_ID`, `KWIKLEDGERS_RUN_ID` e
+`KWIKLEDGERS_SPAN_ID` complementam o request ID quando conhecidos. Cada chamada
+recebe um span filho próprio; correlação não substitui aprovação.
+
 `python -m kwikledgers_langgraph.graph_catalog` retorna JSON com nós, conexões,
 fontes e Mermaid de 12 topologias reais, extraídas por `get_graph()` das fábricas.
 Não executa grafos, não registra assistants executáveis e não usa os mocks do

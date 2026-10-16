@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from kwikledgers_fastmcp.shared.operational_context import OperationalContext
 
 
 def _default_stdio_command() -> str:
@@ -89,8 +90,11 @@ class FastMCPClientConfig:
 
 
 class FastMCPClient:
-    def __init__(self, config: FastMCPClientConfig | None = None) -> None:
+    def __init__(
+        self, config: FastMCPClientConfig | None = None, *, context: OperationalContext | None = None,
+    ) -> None:
         self.config = config if config is not None else FastMCPClientConfig.from_environment()
+        self.context = context if context is not None else OperationalContext.from_environment()
 
     def _timeout_for_capability(self, capability_name: str) -> float:
         if capability_name in {"create_calendar_event", "schedule_reminder", "get_upcoming_deadlines"}:
@@ -160,6 +164,10 @@ class FastMCPClient:
             read_stream, write_stream, read_timeout_seconds=timedelta(seconds=self._timeout_for_capability(capability_name)),
         ) as session:
             await session.initialize()
+            if self.context is not None:
+                return await session.call_tool(
+                    capability_name, arguments={"arguments": arguments}, meta=self.context.child().metadata(),
+                )
             return await session.call_tool(capability_name, arguments={"arguments": arguments})
 
     @staticmethod
