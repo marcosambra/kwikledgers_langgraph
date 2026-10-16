@@ -92,6 +92,8 @@ def transition_handoff(
 
     record, changed = HandoffStore(tracking_root).update(handoff_id, transform)
     if changed:
+        labels = {"accepted": "Aceite confirmado", "running": "Em execução", "blocked": "Bloqueada",
+                  "failed": "Falhou", "completed": "Conclusão informada"}
         metrics = RequestMetricsService(tracking_root=tracking_root)
         if not session_id:
             metrics.append_event(
@@ -100,7 +102,7 @@ def transition_handoff(
             )
         metrics.append_event(
             request_id=record["request_id"], session_id=session_id, source="langgraph", kind="step",
-            label=f"Handoff: {status}",
+            label=f"Continuação: {labels[status]}",
             status="completed" if status in {"accepted", "completed"} else "running" if status == "running" else status,
             details={"operation": "handoff", "outcome": status, "evidence": safe_evidence},
         )
