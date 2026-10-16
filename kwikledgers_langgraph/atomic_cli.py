@@ -15,7 +15,7 @@ from kwikledgers_langgraph.atomic_runtime import (
 from kwikledgers_langgraph.fastmcp_client import FastMCPClient
 from kwikledgers_langgraph.lifecycle_adapters import ExplicitLocalApproval, LifecycleJournal, build_lifecycle_ports
 from kwikledgers_langgraph.lifecycle_cli import (
-    checkpoint_lock, lifecycle_confirmation, lifecycle_exit_code, lifecycle_issuers, lifecycle_output,
+    checkpoint_lock, lifecycle_confirmation, lifecycle_exit_code, lifecycle_issuers, lifecycle_output, record_cli_metrics,
 )
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 
@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             output = run_atomic_cli(graph, name=args.name, thread_id=args.thread_id,
                                     arguments=payload, resume=args.resume,
                                     approval_request_id=args.approval_request_id)
+            record_cli_metrics(graph.get_state(config).values, output)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)
     except Exception:

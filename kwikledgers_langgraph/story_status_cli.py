@@ -6,7 +6,7 @@ from typing import Any
 
 from kwikledgers_langgraph.backend_factory import build_story_status_transition_ports, resolve_backend_name
 from kwikledgers_langgraph.guardrails import load_resume_confirmation
-from kwikledgers_langgraph.observability import append_runtime_usage_metrics, build_observability_context
+from kwikledgers_langgraph.observability import append_request_metrics, append_runtime_usage_metrics, build_observability_context
 from kwikledgers_langgraph.runtime import build_story_status_transition_runtime
 from kwikledgers_langgraph.state import AgentState, StoryStatusTransitionRequest
 from kwikledgers_langgraph.state_persistence import (
@@ -159,6 +159,7 @@ def run_story_status_transition(arguments: argparse.Namespace) -> dict[str, Any]
 
 def _record_runtime_observability(result: dict[str, Any]) -> None:
     append_runtime_usage_metrics(result)
+    append_request_metrics(result)
 
 
 def main(argv: list[str] | None = None) -> int:

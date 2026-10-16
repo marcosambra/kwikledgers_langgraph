@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 from kwikledgers_langgraph.observability import (
     append_runtime_usage_metrics,
+    append_request_metrics,
     build_observability_context,
     build_runtime_usage_metrics_entry,
     record_runtime_event,
@@ -63,6 +65,48 @@ class ObservabilityTestCase(unittest.TestCase):
         self.assertEqual(timeline[-1]["node"], "fetch_summary")
         self.assertEqual(timeline[-1]["status"], "completed")
         self.assertEqual(timeline[-1]["payload"]["counts"]["assigned_items"], 3)
+        self.assertIn("at", timeline[-1])
+        self.assertGreaterEqual(timeline[-1]["duration_ms"], 0)
+
+    def test_request_metrics_preserve_graph_steps_without_payloads(self) -> None:
+        with patch.dict(os.environ, {"KWIKLEDGERS_REQUEST_ID": ""}):
+            state = {"observability": build_observability_context(flow_name="daily_summary", source="test")}
+        state.update(record_runtime_event(
+            state, node="fetch_summary", status="completed",
+            message="private-message", payload={"token": "private-token"},
+        ))
+        with tempfile.TemporaryDirectory() as directory:
+            tracking = Path(directory) / "AI_Tracking"
+            tracking.mkdir()
+            path = append_request_metrics(state, tracking_root=tracking)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual(records[0]["kind"], "request_started")
+        self.assertEqual(records[-1]["kind"], "request_finished")
+        self.assertGreaterEqual(records[-1]["duration_ms"], 0)
+        self.assertEqual(records[2]["details"]["node"], "fetch_summary")
+        self.assertNotIn("private-token", json.dumps(records))
+        self.assertNotIn("private-message", json.dumps(records))
+
+    def test_correlated_graph_does_not_finish_user_request(self) -> None:
+        with patch.dict(os.environ, {"KWIKLEDGERS_REQUEST_ID": "request-explicit"}):
+            state = {"observability": build_observability_context(flow_name="daily_summary", source="test")}
+        with tempfile.TemporaryDirectory() as directory:
+            tracking = Path(directory) / "AI_Tracking"
+            tracking.mkdir()
+            path = append_request_metrics(state, tracking_root=tracking)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertTrue(all(row["request_id"] == "request-explicit" for row in records))
+        self.assertTrue(all(row["kind"] == "step" for row in records))
+
+    def test_waiting_graph_is_not_reported_as_completed(self) -> None:
+        with patch.dict(os.environ, {"KWIKLEDGERS_REQUEST_ID": ""}):
+            state = {"outcome": "waiting", "observability": build_observability_context(flow_name="approval", source="test")}
+        with tempfile.TemporaryDirectory() as directory:
+            tracking = Path(directory) / "AI_Tracking"
+            tracking.mkdir()
+            path = append_request_metrics(state, tracking_root=tracking)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual(records[-1]["status"], "blocked")
 
     def test_build_runtime_usage_metrics_entry_uses_minimal_operational_fields(self) -> None:
         state = {

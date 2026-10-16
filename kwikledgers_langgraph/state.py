@@ -101,6 +101,8 @@ class ObservabilityEvent(TypedDict, total=False):
     status: str
     message: str
     payload: dict[str, Any]
+    at: str
+    duration_ms: float | None
 
 
 class ObservabilityContext(TypedDict, total=False):
@@ -108,6 +110,8 @@ class ObservabilityContext(TypedDict, total=False):
     active_run_id: str
     flow_name: str
     source: str
+    started_at: str
+    request_id: str
     backend_name: str
     decisions: list[str]
     timeline: list[ObservabilityEvent]

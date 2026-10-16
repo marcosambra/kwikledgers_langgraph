@@ -16,7 +16,7 @@ from kwikledgers_langgraph.atomic_cli import load_json
 from kwikledgers_langgraph.fastmcp_execution_capability import issue_runtime_execution_capability
 from kwikledgers_langgraph.graphs.technical_debt_preparation import build_technical_debt_preparation_graph
 from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal, build_debt_preparation_ports
-from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_output
+from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_output, record_cli_metrics
 
 
 def parser() -> argparse.ArgumentParser:
@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             result = build_technical_debt_preparation_graph(ports).invoke({"request": arguments})
             output = lifecycle_output(result)
+            record_cli_metrics(result, output)
             if output["outcome"] == "preview_only" and not output["errors"]:
                 run_id = result.get("run_id")
                 if (not isinstance(run_id, str) or not run_id.strip()

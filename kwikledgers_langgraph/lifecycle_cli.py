@@ -17,6 +17,7 @@ from kwikledgers_langgraph.lifecycle_adapters import (
 from kwikledgers_langgraph.lifecycle_runtime import (
     LIFECYCLE_BUILDERS, SignedLifecycleCheckpointer, build_lifecycle_runtime,
 )
+from kwikledgers_langgraph.observability import append_request_metrics
 
 
 def parser() -> argparse.ArgumentParser:
@@ -68,6 +69,19 @@ def lifecycle_exit_code(output: dict[str, Any]) -> int:
     if outcome in ("running", "waiting", "interrupted") or output.get("prompt") is not None or output.get("pending_approval"):
         return 2
     return 0 if outcome == "completed" else 1
+
+
+def record_cli_metrics(state: dict[str, Any], output: dict[str, Any]) -> None:
+    try:
+        append_request_metrics(state)
+    except (OSError, ValueError, RuntimeError) as error:
+        warning = (
+            "Falha ao persistir métricas após a execução do grafo: "
+            f"{type(error).__name__}. O resultado da operação permanece válido; "
+            "não repita escritas para corrigir a telemetria."
+        )
+        output["metrics_error"] = warning
+        print(warning, file=sys.stderr)
 
 
 def lifecycle_confirmation(state: dict[str, Any], *, receipt: Any = None,
@@ -177,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
                              approval_request_id=args.approval_request_id,
                              branch_type=args.branch_type, request={"story_id": args.story_id,
                              "task_id": args.task_id, "repository_name": args.repository_name})
+            record_cli_metrics(graph.get_state({"configurable": {"thread_id": args.thread_id}}).values, output)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)
     except Exception:

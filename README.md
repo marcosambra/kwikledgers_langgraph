@@ -39,6 +39,44 @@ flowchart LR
 
 ## Catálogo de Grafos
 
+### Métricas por solicitação
+
+Os hooks de `UserPromptSubmit`, `PreToolUse`, `PostToolUse` e `Stop` registram
+o ciclo observado de cada solicitação e os passos de ferramentas no arquivo
+compartilhado `AI_Tracking/Metrics/request-events.jsonl`. FastMCP fornece o
+serviço de persistência; os grafos exportam os eventos operacionais e a extensão
+consulta a mesma fonte. Nenhum desses registros autoriza alterações no Azure.
+
+```mermaid
+flowchart LR
+    Pedido[Solicitação do usuário] --> Hook[Hooks do agente]
+    Hook --> Registro[Registro local de métricas FastMCP]
+    Grafo[Eventos dos grafos] --> Registro
+    Operacao[Operações FastMCP] --> Registro
+    Registro --> Painel[Extensão: desempenho das solicitações]
+```
+
+Para correlacionar uma CLI ao pedido do chat, use o ID informado pelo hook em
+`KWIKLEDGERS_REQUEST_ID`. Sem um ID explícito, os grafos e operações independentes
+não são atribuídos por suposição a outra sessão. Os eventos existentes de
+`langgraph-runtime-events.jsonl` mantêm seus nomes e recebem apenas os campos
+aditivos `observed_at` e `duration_ms`, preservando o consumo pelo observatório.
+
+Os intervalos dos nós são medidos entre timestamps de eventos, não representam
+CPU ou execução exclusiva do nó. O tempo total inclui esperas; passos aninhados
+não devem ser somados ao total da solicitação. Sem início conhecido, a duração
+fica ausente. `Stop` encerra a medição da resposta, não comprova sucesso da
+task. Uma nova solicitação interrompe a anterior que não recebeu encerramento.
+Sem `PostToolUse` observado, não se inventa conclusão nem duração da ferramenta.
+
+O hook não persiste prompts nem argumentos/resultados de ferramentas; apenas
+identificadores, nomes, status e durações. Justificativas são resumos
+operacionais baseados em evidências, não raciocínio interno privado. Os eventos
+de grafos são exportados ao retornar à CLI; se o processo terminar antes disso,
+o hook pode registrar a execução externa, mas não há garantia de exportação dos
+nós internos. Novos hooks precisam ser carregados pela sessão do editor;
+instalar uma extensão não comprova que o host de agentes os carregou.
+
 `python -m kwikledgers_langgraph.graph_catalog` retorna JSON com nós, conexões,
 fontes e Mermaid de 12 topologias reais, extraídas por `get_graph()` das fábricas.
 Não executa grafos, não registra assistants executáveis e não usa os mocks do

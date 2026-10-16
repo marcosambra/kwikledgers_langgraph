@@ -11,7 +11,7 @@ from langgraph.types import Command
 
 from kwikledgers_langgraph.atomic_cli import load_json
 from kwikledgers_langgraph.lifecycle_adapters import ExplicitLocalApproval, LifecycleJournal, build_lifecycle_ports
-from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_confirmation, lifecycle_issuers, lifecycle_exit_code
+from kwikledgers_langgraph.lifecycle_cli import checkpoint_lock, lifecycle_confirmation, lifecycle_issuers, lifecycle_exit_code, record_cli_metrics
 from kwikledgers_langgraph.lifecycle_runtime import SignedLifecycleCheckpointer
 from kwikledgers_langgraph.work_item_creation import (
     ACTION, CreationValidationError, build_work_item_creation_graph, format_creation_rich_text,
@@ -115,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             output = run_work_item_creation_cli(graph, thread_id=args.thread_id, arguments=payload,
                 operator=operator, resume=args.resume,
                 approval_request_id=args.approval_request_id)
+            record_cli_metrics(graph.get_state({"configurable": {"thread_id": args.thread_id}}).values, output)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)
     except CreationValidationError as error:

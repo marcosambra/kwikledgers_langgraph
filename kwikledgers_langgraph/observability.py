@@ -32,11 +32,14 @@ _MAX_EXTERNAL_COLLECTION_ITEMS = 20
 def build_observability_context(*, flow_name: str, source: str, backend_name: str | None = None) -> dict[str, Any]:
     correlation_id = str(uuid.uuid4())
     active_run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
     context = {
         "correlation_id": correlation_id,
         "active_run_id": active_run_id,
         "flow_name": flow_name,
         "source": source,
+        "started_at": started_at,
+        "request_id": os.environ.get("KWIKLEDGERS_REQUEST_ID", ""),
         "decisions": [],
         "timeline": [
             {
@@ -44,6 +47,7 @@ def build_observability_context(*, flow_name: str, source: str, backend_name: st
                 "status": "initialized",
                 "message": "Fluxo preparado para execução.",
                 "payload": {"source": source},
+                "at": started_at,
             }
         ],
     }
@@ -107,12 +111,23 @@ def record_runtime_event(
     observability = dict(state.get("observability", {}))
     decisions = list(observability.get("decisions", []))
     timeline = list(observability.get("timeline", []))
+    at = datetime.now(timezone.utc)
+    observability.setdefault("started_at", at.isoformat())
+    observability.setdefault("request_id", os.environ.get("KWIKLEDGERS_REQUEST_ID", ""))
+    previous_at = timeline[-1].get("at") if timeline else None
+    elapsed_ms = None
+    if previous_at:
+        elapsed_ms = (at - datetime.fromisoformat(previous_at)).total_seconds() * 1000
+        if elapsed_ms < 0:
+            raise ValueError("Relógio retrocedeu durante o fluxo; duração não é confiável.")
     timeline.append(
         {
             "node": node,
             "status": status,
             "message": message,
             "payload": payload or {},
+            "at": at.isoformat(),
+            "duration_ms": elapsed_ms,
         }
     )
     decisions.append(f"runtime.{node}.{status}")
@@ -206,6 +221,8 @@ def build_runtime_event_stream_records(state: AgentState) -> list[dict[str, Any]
                 "status": event.get("status"),
                 "message": _sanitize_external_text(event.get("message") or ""),
                 "payload": sanitize_external_payload(dict(event.get("payload", {}))),
+                "observed_at": event.get("at"),
+                "duration_ms": event.get("duration_ms"),
             }
         )
 
@@ -322,7 +339,69 @@ def append_runtime_observability_artifacts(
 ) -> dict[str, Path]:
     usage_metrics_path = append_runtime_usage_metrics(state, tracking_root=tracking_root)
     event_stream_path = append_runtime_event_stream(state, tracking_root=tracking_root)
+    request_events_path = append_request_metrics(state, tracking_root=tracking_root)
     return {
         "usage_metrics_path": usage_metrics_path,
         "event_stream_path": event_stream_path,
+        "request_events_path": request_events_path,
     }
+
+
+def append_request_metrics(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
+    from kwikledgers_fastmcp.domains.local_tracking.request_metrics import RequestMetricsService
+
+    root = resolve_ai_tracking_root(tracking_root)
+    service = RequestMetricsService(root.parent)
+    context = state.get("observability", {})
+    timeline = context.get("timeline", [])
+    run_id = context.get("active_run_id") or str(uuid.uuid4())
+    parent_request = os.environ.get("KWIKLEDGERS_REQUEST_ID") or context.get("request_id")
+    request_id = parent_request or f"graph-{run_id}"
+    flow_name = context.get("flow_name", "unknown_flow")
+    common: dict[str, Any] = {"flow_name": flow_name, "run_id": run_id}
+    if not parent_request:
+        service.append_event(
+            request_id=request_id, source="langgraph", kind="request_started",
+            label=f"Grafo: {flow_name}", status="running",
+            details={**common, "observed_at": context.get("started_at", ""),
+                     "measurement": "elapsed_wall_time"},
+        )
+    for event in timeline:
+        raw_status = event.get("status", "")
+        status = (
+            "failed" if raw_status in {"failed", "error"}
+            else "blocked" if raw_status in {"blocked", "awaiting_approval", "waiting_approval"}
+            else "running" if raw_status in {"initialized", "running", "started"}
+            else "completed"
+        )
+        service.append_event(
+            request_id=request_id, source="langgraph", kind="step",
+            label=f"{flow_name}: {event.get('node', 'unknown')} ({raw_status})",
+            status=status, duration_ms=event.get("duration_ms"),
+            details={**common, "node": event.get("node", ""),
+                     "observed_at": event.get("at", ""),
+                     "measurement": "interval_since_previous_event"},
+        )
+    if not parent_request:
+        duration_ms = None
+        start = context.get("started_at")
+        end = timeline[-1].get("at") if timeline else None
+        if start and end:
+            duration_ms = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000
+            if duration_ms < 0:
+                raise ValueError("Duração do grafo inválida.")
+        outcome = state.get("outcome")
+        final_status = "failed" if state.get("errors") or outcome in {"failed", "reconciliation_required"} else "completed"
+        if any(event.get("status") in {"failed", "error"} for event in timeline[-1:]):
+            final_status = "failed"
+        if outcome in {"blocked", "denied", "waiting", "running"} or any(
+            event.get("status") in {"blocked", "awaiting_approval", "waiting_approval"} for event in timeline[-1:]
+        ):
+            final_status = "blocked"
+        service.append_event(
+            request_id=request_id, source="langgraph", kind="request_finished",
+            label=f"Grafo encerrado: {flow_name}", status=final_status,
+            duration_ms=duration_ms,
+            details={**common, "measurement": "elapsed_wall_time"},
+        )
+    return root / "Metrics" / "request-events.jsonl"
