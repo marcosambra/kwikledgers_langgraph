@@ -135,6 +135,16 @@ Tracking nativo:
 
 ## Execucao manual
 
+O resumo operacional da extensão usa esta mesma CLI, sem iniciar `langgraph dev`
+ou FastMCP HTTP. `--sprint-path` e `--story-id` selecionam o contexto no provider
+oficial. `--json` retorna apenas o envelope versão `1` (`operation`, `context`,
+`status`, `result`); falhas retornam código diferente de zero.
+`--standalone-request` registra o ciclo próprio de uma consulta independente do
+chat; não deve ser usado para duplicar o ciclo já controlado pelos hooks.
+Uma execução do resumo compartilha uma sessão MCP e encerra o processo stdio
+ao terminar, inclusive em falhas. Chamadas avulsas continuam suportadas.
+Timeouts de mutações continuam com resultado desconhecido, sem retry automático.
+
 Instale as dependencias do ambiente com Poetry:
 
 ```bash

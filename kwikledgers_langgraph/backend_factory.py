@@ -55,6 +55,7 @@ def resolve_backend_name(explicit_backend: str | None = None) -> str:
 def build_daily_summary_ports(
     *, backend_name: str, notifications_enabled: bool, client: CapabilityClient | None = None,
     execution_capability_provider: ExecutionCapabilityProvider | None = None,
+    sprint_path: str | None = None, story_id: int | None = None,
 ) -> DailySummaryPorts:
     if backend_name == FASTMCP_BACKEND:
         from kwikledgers_langgraph.fastmcp_adapters import (
@@ -65,7 +66,7 @@ def build_daily_summary_ports(
         capability_client = client if client is not None else FastMCPClient()
         return DailySummaryPorts(
             identity=EnvironmentIdentityResolverAdapter(),
-            provider=FastMCPDailySummaryProvider(capability_client),
+            provider=FastMCPDailySummaryProvider(capability_client, sprint_path=sprint_path, story_id=story_id),
             tracking=FastMCPTrackingSyncAdapter(capability_client, execution_capability_provider),
             notifications=(FastMCPNotificationAdapter(capability_client, execution_capability_provider)
                            if notifications_enabled else NoOpNotificationAdapter()),

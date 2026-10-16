@@ -112,6 +112,7 @@ class ObservabilityContext(TypedDict, total=False):
     source: str
     started_at: str
     request_id: str
+    owns_request: bool
     backend_name: str
     decisions: list[str]
     timeline: list[ObservabilityEvent]

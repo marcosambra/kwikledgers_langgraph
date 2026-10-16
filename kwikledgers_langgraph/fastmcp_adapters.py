@@ -127,8 +127,22 @@ class _FastMCPAdapter:
 
 
 class FastMCPDailySummaryProvider(_FastMCPAdapter):
+    def __init__(
+        self, client: CapabilityClient | None = None, *, sprint_path: str | None = None, story_id: int | None = None,
+    ) -> None:
+        super().__init__(client)
+        if sprint_path is not None and (not isinstance(sprint_path, str) or not sprint_path.strip()):
+            raise ValueError("O caminho da sprint selecionada deve ser preenchido.")
+        if story_id is not None and (type(story_id) is not int or story_id <= 0):
+            raise ValueError("O ID da história deve ser um inteiro positivo.")
+        self.arguments = {}
+        if sprint_path is not None:
+            self.arguments["sprint_path"] = sprint_path
+        if story_id is not None:
+            self.arguments["story_id"] = story_id
+
     def fetch_daily_summary(self) -> dict[str, Any]:
-        return self.client.call("get_my_daily_summary", {})
+        return self.client.call("get_my_daily_summary", dict(self.arguments))
 
 
 class FastMCPDayEndClosureAdapter(_FastMCPAdapter):

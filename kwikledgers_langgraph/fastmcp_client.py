@@ -7,11 +7,12 @@ import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, AsyncIterator, Protocol
 from urllib.parse import urlsplit
 
 from mcp import ClientSession, StdioServerParameters
@@ -95,6 +96,23 @@ class FastMCPClient:
     ) -> None:
         self.config = config if config is not None else FastMCPClientConfig.from_environment()
         self.context = context if context is not None else OperationalContext.from_environment()
+        self._session: ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[FastMCPClient]:
+        """Keep transport and initialization scoped to one runtime execution."""
+        if self._session is not None:
+            raise FastMCPClientError("A sessão MCP já está aberta.")
+        async with AsyncExitStack() as stack:
+            streams = await stack.enter_async_context(self._streams())
+            session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
+            await session.initialize()
+            self._session, self._session_loop = session, asyncio.get_running_loop()
+            try:
+                yield self
+            finally:
+                self._session, self._session_loop = None, None
 
     def _timeout_for_capability(self, capability_name: str) -> float:
         if capability_name in {"create_calendar_event", "schedule_reminder", "get_upcoming_deadlines"}:
@@ -113,6 +131,17 @@ class FastMCPClient:
         return max(self.config.timeout_seconds, min(server_timeout, 300) * attempts + margin)
 
     def call(self, capability_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._session_loop is not None:
+            try:
+                caller_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                caller_loop = None
+            if caller_loop is self._session_loop:
+                raise FastMCPClientError("Use acall no loop proprietário da sessão MCP.")
+            return asyncio.run_coroutine_threadsafe(
+                self.acall(capability_name, arguments), self._session_loop,
+            ).result()
+
         def run() -> dict[str, Any]:
             return asyncio.run(self.acall(capability_name, arguments))
 
@@ -144,18 +173,26 @@ class FastMCPClient:
             ) from None
 
     async def _request(self, capability_name: str, arguments: dict[str, Any]) -> Any:
+        if self._session is not None:
+            return await self._invoke_session(self._session, capability_name, arguments, reused=True)
+        async with self._streams(capability_name) as streams:
+            return await self._call_session(streams[0], streams[1], capability_name, arguments)
+
+    @asynccontextmanager
+    async def _streams(self, capability_name: str = "") -> AsyncIterator[Any]:
         if self.config.transport == "stdio":
             parameters = StdioServerParameters(
                 command=self.config.command, args=list(self.config.args),
                 env=dict(os.environ) if self.config.env is None else dict(self.config.env),
             )
             async with stdio_client(parameters) as (read_stream, write_stream):
-                return await self._call_session(read_stream, write_stream, capability_name, arguments)
-        timeout = timedelta(seconds=self._timeout_for_capability(capability_name))
-        async with streamablehttp_client(
-            self.config.url or "", timeout=timeout, sse_read_timeout=timeout,
-        ) as (read_stream, write_stream, _get_session_id):
-            return await self._call_session(read_stream, write_stream, capability_name, arguments)
+                yield read_stream, write_stream
+        else:
+            timeout = timedelta(seconds=self._timeout_for_capability(capability_name))
+            async with streamablehttp_client(
+                self.config.url or "", timeout=timeout, sse_read_timeout=timeout,
+            ) as (read_stream, write_stream, _get_session_id):
+                yield read_stream, write_stream
 
     async def _call_session(
         self, read_stream: Any, write_stream: Any, capability_name: str, arguments: dict[str, Any],
@@ -164,11 +201,17 @@ class FastMCPClient:
             read_stream, write_stream, read_timeout_seconds=timedelta(seconds=self._timeout_for_capability(capability_name)),
         ) as session:
             await session.initialize()
-            if self.context is not None:
-                return await session.call_tool(
-                    capability_name, arguments={"arguments": arguments}, meta=self.context.child().metadata(),
-                )
-            return await session.call_tool(capability_name, arguments={"arguments": arguments})
+            return await self._invoke_session(session, capability_name, arguments)
+
+    async def _invoke_session(
+        self, session: ClientSession, capability_name: str, arguments: dict[str, Any], *, reused: bool = False,
+    ) -> Any:
+        options: dict[str, Any] = {}
+        if self.context is not None:
+            options["meta"] = self.context.child().metadata()
+        if reused:
+            options["read_timeout_seconds"] = timedelta(seconds=self._timeout_for_capability(capability_name))
+        return await session.call_tool(capability_name, arguments={"arguments": arguments}, **options)
 
     @staticmethod
     def _normalize(result: Any, capability_name: str) -> dict[str, Any]:

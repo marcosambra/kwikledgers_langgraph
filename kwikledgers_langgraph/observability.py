@@ -351,15 +351,16 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
     from kwikledgers_fastmcp.domains.local_tracking.request_metrics import RequestMetricsService
 
     root = resolve_ai_tracking_root(tracking_root)
-    service = RequestMetricsService(root.parent)
+    service = RequestMetricsService(tracking_root=root)
     context = state.get("observability", {})
     timeline = context.get("timeline", [])
     run_id = context.get("active_run_id") or str(uuid.uuid4())
     parent_request = os.environ.get("KWIKLEDGERS_REQUEST_ID") or context.get("request_id")
+    owns_request = not parent_request or context.get("owns_request") is True
     request_id = parent_request or f"graph-{run_id}"
     flow_name = context.get("flow_name", "unknown_flow")
     common: dict[str, Any] = {"flow_name": flow_name, "run_id": run_id}
-    if not parent_request:
+    if owns_request:
         service.append_event(
             request_id=request_id, source="langgraph", kind="request_started",
             label=f"Grafo: {flow_name}", status="running",
@@ -382,7 +383,7 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
                      "observed_at": event.get("at", ""),
                      "measurement": "interval_since_previous_event"},
         )
-    if not parent_request:
+    if owns_request:
         duration_ms = None
         start = context.get("started_at")
         end = timeline[-1].get("at") if timeline else None
