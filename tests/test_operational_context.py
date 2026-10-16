@@ -6,6 +6,31 @@ from kwikledgers_langgraph.fastmcp_client import FastMCPClient
 
 
 class ClientMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_initialization_timeout_is_bounded_and_does_not_send_operations(self):
+        import asyncio
+        from contextlib import asynccontextmanager
+        from unittest.mock import patch
+        from kwikledgers_langgraph.fastmcp_client import FastMCPClientConfig, FastMCPClientError
+
+        @asynccontextmanager
+        async def transport(_parameters):
+            yield "read", "write"
+
+        session = AsyncMock()
+        session.__aenter__.return_value = session
+        async def initialize():
+            await asyncio.sleep(10)
+
+        session.initialize.side_effect = initialize
+        client = FastMCPClient(FastMCPClientConfig(timeout_seconds=0.01))
+        with patch("kwikledgers_langgraph.fastmcp_client.stdio_client", transport), \
+             patch("kwikledgers_langgraph.fastmcp_client.ClientSession", return_value=session):
+            with self.assertRaisesRegex(FastMCPClientError, "nenhuma capability"):
+                async with client.session():
+                    self.fail("Sessão não deveria inicializar.")
+        session.call_tool.assert_not_called()
+        session.__aexit__.assert_awaited_once()
+
     async def test_runtime_session_initializes_once_and_closes_after_calls(self):
         import asyncio
         from contextlib import asynccontextmanager

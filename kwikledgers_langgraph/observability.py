@@ -40,6 +40,8 @@ def build_observability_context(*, flow_name: str, source: str, backend_name: st
         "source": source,
         "started_at": started_at,
         "request_id": os.environ.get("KWIKLEDGERS_REQUEST_ID", ""),
+        "session_id": os.environ.get("KWIKLEDGERS_SESSION_ID", ""),
+        "workspace_id": os.environ.get("KWIKLEDGERS_WORKSPACE_ID", ""),
         "decisions": [],
         "timeline": [
             {
@@ -360,9 +362,10 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
     request_id = parent_request or f"graph-{run_id}"
     flow_name = context.get("flow_name", "unknown_flow")
     common: dict[str, Any] = {"flow_name": flow_name, "run_id": run_id}
+    session_id = context.get("session_id", "")
     if owns_request:
         service.append_event(
-            request_id=request_id, source="langgraph", kind="request_started",
+            request_id=request_id, session_id=session_id, source="langgraph", kind="request_started",
             label=f"Grafo: {flow_name}", status="running",
             details={**common, "observed_at": context.get("started_at", ""),
                      "measurement": "elapsed_wall_time"},
@@ -376,7 +379,7 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
             else "completed"
         )
         service.append_event(
-            request_id=request_id, source="langgraph", kind="step",
+            request_id=request_id, session_id=session_id, source="langgraph", kind="step",
             label=f"{flow_name}: {event.get('node', 'unknown')} ({raw_status})",
             status=status, duration_ms=event.get("duration_ms"),
             details={**common, "node": event.get("node", ""),
@@ -400,7 +403,7 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
         ):
             final_status = "blocked"
         service.append_event(
-            request_id=request_id, source="langgraph", kind="request_finished",
+            request_id=request_id, session_id=session_id, source="langgraph", kind="request_finished",
             label=f"Grafo encerrado: {flow_name}", status=final_status,
             duration_ms=duration_ms,
             details={**common, "measurement": "elapsed_wall_time"},

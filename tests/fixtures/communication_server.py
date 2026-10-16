@@ -24,5 +24,7 @@ async def fixture_azure(name, arguments):
 if __name__ == "__main__":
     with Path(os.environ["COMMUNICATION_SMOKE_MARKER"]).open("a") as marker:
         marker.write(f"{os.getpid()}\n")
+    for field in ("REQUEST_ID", "SESSION_ID", "RUN_ID", "SPAN_ID", "PARENT_SPAN_ID", "WORKSPACE_ID"):
+        os.environ.pop(f"KWIKLEDGERS_{field}", None)
     capability_gateway.invoke_azure_capability = fixture_azure
     build_fastmcp_server().run()

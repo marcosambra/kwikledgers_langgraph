@@ -8,6 +8,37 @@ from pathlib import Path
 
 
 class CommunicationIntegrationTests(unittest.TestCase):
+    def test_real_handoff_cli_hook_acceptance_and_explicit_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tracking = Path(temporary) / "AI_Tracking"
+            env = {**os.environ, "KWIKLEDGERS_ROOT_DIR": temporary, "KWIKLEDGERS_AI_TRACKING_ROOT": str(tracking)}
+
+            def invoke(module, args=(), payload=None):
+                result = subprocess.run([sys.executable, "-m", module, *args], env=env,
+                                        input=json.dumps(payload) if payload is not None else None,
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(result.stdout) if result.stdout.strip() else None
+
+            handoff = invoke("kwikledgers_langgraph.handoff_cli", ["--create", "--story-id", "42", "--task-ids", "43"])
+            record_path = Path(handoff["path"])
+            self.assertEqual(json.loads(record_path.read_text())["status"], "pending")
+            invoke("kwikledgers_langgraph.request_metrics_hook", ["--event", "UserPromptSubmit"],
+                   {"session_id": "integration-session", "prompt": handoff["marker"]})
+            self.assertEqual(json.loads(record_path.read_text())["status"], "accepted")
+            invoke("kwikledgers_langgraph.request_metrics_hook", ["--event", "PreToolUse"],
+                   {"session_id": "integration-session", "tool_name": "runTests", "tool_use_id": "tests"})
+            self.assertEqual(json.loads(record_path.read_text())["status"], "running")
+            invoke("kwikledgers_langgraph.handoff_cli", [
+                "--handoff-id", handoff["handoff_id"], "--session-id", "integration-session",
+                "--status", "completed", "--tests-passed", "--evidence", "Fixture validada.",
+            ])
+            invoke("kwikledgers_langgraph.request_metrics_hook", ["--event", "Stop"],
+                   {"session_id": "integration-session"})
+            record = json.loads(record_path.read_text())
+            self.assertEqual(record["status"], "completed")
+            self.assertEqual(record["mode"], "local-only")
+
     def test_real_cli_graph_stdio_server_and_ledger_share_one_context_and_process(self):
         workspace = Path(__file__).resolve().parents[2]
         server_python = workspace / "kwikledgers_fastmcp" / ".venv" / "bin" / "python"

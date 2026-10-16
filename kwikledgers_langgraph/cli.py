@@ -110,8 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Falha no resumo operacional: {type(error).__name__}. Consulte o runtime.", file=sys.stderr)
         return 1
 
-    summary = result.get("summary", {})
-    counts = summary.get("counts", {})
+    summary = result.get("summary")
+    counts = summary.get("counts", {}) if isinstance(summary, dict) else {}
     if args.standalone_request:
         result.setdefault("observability", {})["owns_request"] = True
     if not args.disable_observability_sync:

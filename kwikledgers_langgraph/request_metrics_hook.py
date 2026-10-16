@@ -10,6 +10,8 @@ from typing import Any
 
 from kwikledgers_fastmcp.domains.local_tracking.request_metrics import RequestMetricsService
 from kwikledgers_fastmcp.domains.local_tracking.services import TrackingService
+from kwikledgers_fastmcp.domains.local_tracking.handoffs import HandoffStore
+from kwikledgers_langgraph.handoff import parse_handoff_marker, transition_handoff
 from kwikledgers_langgraph.observability import resolve_ai_tracking_root
 
 
@@ -29,22 +31,71 @@ def handle_event(
     session_id = payload.get("session_id") or payload.get("sessionId")
     if not isinstance(session_id, str) or not session_id:
         raise ValueError("Hook de métricas sem session_id; solicitação não registrada.")
-    service = RequestMetricsService(tracking_root.parent)
+    routing = TrackingService(tracking_root=tracking_root)
+    route_path = tracking_root / "Task_Control" / "handoff-sessions" / f"{hashlib.sha256(session_id.encode()).hexdigest()}.json"
+    with routing.locked():
+        route = json.loads(route_path.read_text(encoding="utf-8")) if route_path.exists() else None
+    selected_root = Path(route["tracking_root"]) if route else tracking_root
+    service = RequestMetricsService(tracking_root=selected_root)
     if event == "UserPromptSubmit":
-        request = service.start_request(session_id)
+        if route:
+            old = HandoffStore(selected_root).read(route["handoff_id"])
+            if old is None:
+                raise ValueError("O registro do handoff ativo não foi encontrado.")
+            if old["status"] in {"accepted", "running"}:
+                transition_handoff(selected_root, old["handoff_id"], "blocked", session_id=session_id,
+                                   evidence="Nova solicitação recebida antes da conclusão.")
+            service.finish_request(session_id, status="interrupted")
+            with routing.locked():
+                route_path.unlink(missing_ok=True)
+        descriptor = parse_handoff_marker(
+            payload.get("prompt"), workspace_root=tracking_root.parent, default_tracking_root=tracking_root,
+        )
+        handoff_message = ""
+        if descriptor:
+            selected_root, handoff_id = descriptor
+            service = RequestMetricsService(tracking_root=selected_root)
+            request = service.start_request(session_id, label="Continuação local", request_id=handoff_id)
+            transition_handoff(selected_root, handoff_id, "accepted", session_id=session_id)
+            with routing.locked():
+                route_path.parent.mkdir(parents=True, exist_ok=True)
+                routing._atomic_write(route_path, json.dumps({
+                    "tracking_root": str(selected_root), "handoff_id": handoff_id,
+                }))
+            handoff_message = (
+                f" Handoff {handoff_id} accepted for session {session_id}, local-only. "
+                "Confirm the live repository and branch before editing; missing fields are unknown. "
+                "To report completion, run the handoff CLI with --handoff-id, --session-id, "
+                "--status completed, --tests-passed and concise --evidence after relevant tests pass. "
+                f"Use --tracking-root {json.dumps(str(selected_root))}. "
+                "Never infer completion from Stop or use this handoff to authorize commits/Azure writes."
+            )
+        else:
+            service = RequestMetricsService(tracking_root=tracking_root)
+            request = service.start_request(session_id)
         return {
             "systemMessage": (
                 f"Operational request ID: {request['request_id']}. "
                 "Use KWIKLEDGERS_REQUEST_ID with this value for graph/CLI correlation. "
                 "Record only actions, evidence and concise decision summaries, not private reasoning. "
                 "A completed request lifecycle is not proof of task completion."
+                + handoff_message
             )
         }
     request = service.current_request(session_id)
     if request is None:
         raise ValueError("Hook sem solicitação ativa; aguarde o próximo UserPromptSubmit.")
     if event == "Stop":
-        service.finish_request(session_id)
+        status = "completed"
+        if route:
+            record = HandoffStore(selected_root).read(route["handoff_id"])
+            if record is None:
+                raise ValueError("O registro do handoff ativo não foi encontrado.")
+            if record["status"] in {"accepted", "running"}:
+                record = transition_handoff(selected_root, record["handoff_id"], "blocked",
+                                            session_id=session_id, evidence="Resposta encerrada sem conclusão explícita.")
+            status = record["status"]
+        service.finish_request(session_id, status=status)
         return None
 
     tool_name = payload.get("tool_name") or payload.get("toolName")
@@ -53,8 +104,14 @@ def handle_event(
     call_id = payload.get("tool_use_id") or payload.get("toolUseId") or payload.get("tool_call_id")
     now = _now()
     timestamp = now.isoformat()
-    tracking = TrackingService(tracking_root.parent)
-    state_dir = tracking_root / "Task_Control" / "request-tool-spans"
+    if route and event == "PreToolUse":
+        record = HandoffStore(selected_root).read(route["handoff_id"])
+        if record is None:
+            raise ValueError("O registro do handoff ativo não foi encontrado.")
+        if record["status"] in {"accepted", "blocked"}:
+            transition_handoff(selected_root, record["handoff_id"], "running", session_id=session_id)
+    tracking = TrackingService(tracking_root=selected_root)
+    state_dir = selected_root / "Task_Control" / "request-tool-spans"
     duration: float | None = None
     status = "running" if event == "PreToolUse" else "completed"
     with tracking._filesystem_lock():

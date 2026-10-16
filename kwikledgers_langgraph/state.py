@@ -113,6 +113,8 @@ class ObservabilityContext(TypedDict, total=False):
     started_at: str
     request_id: str
     owns_request: bool
+    session_id: str
+    workspace_id: str
     backend_name: str
     decisions: list[str]
     timeline: list[ObservabilityEvent]

@@ -105,9 +105,13 @@ class FastMCPClient:
         if self._session is not None:
             raise FastMCPClientError("A sessão MCP já está aberta.")
         async with AsyncExitStack() as stack:
-            streams = await stack.enter_async_context(self._streams())
-            session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
-            await session.initialize()
+            try:
+                async with asyncio.timeout(self.config.timeout_seconds):
+                    streams = await stack.enter_async_context(self._streams())
+                    session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
+                    await session.initialize()
+            except TimeoutError:
+                raise FastMCPClientError("Tempo limite ao inicializar a sessão MCP; nenhuma capability enviada.") from None
             self._session, self._session_loop = session, asyncio.get_running_loop()
             try:
                 yield self
@@ -188,7 +192,10 @@ class FastMCPClient:
             async with stdio_client(parameters) as (read_stream, write_stream):
                 yield read_stream, write_stream
         else:
-            timeout = timedelta(seconds=self._timeout_for_capability(capability_name))
+            seconds = self._timeout_for_capability(capability_name) if capability_name else max(
+                self._timeout_for_capability(name) for name in ("create_calendar_event", "send_notification")
+            )
+            timeout = timedelta(seconds=seconds)
             async with streamablehttp_client(
                 self.config.url or "", timeout=timeout, sse_read_timeout=timeout,
             ) as (read_stream, write_stream, _get_session_id):

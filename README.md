@@ -16,6 +16,32 @@ O `fastmcp` é o único backend suportado; o backend `legacy` foi removido.
 
 ## Contexto Da Task
 
+### Handoff da extensão para o Copilot
+
+A continuação cria um registro versão 1 em `Task_Control/handoffs/` antes de
+abrir o chat. O marcador identifica apenas esse registro; o hook
+`UserPromptSubmit` confirma `accepted` com a sessão real e usa o mesmo ID no
+ledger. `PreToolUse` registra `running`. Sem hook carregado, o pedido permanece
+`pending`: abrir o chat não comprova aceite.
+
+O handoff contém história, tasks conhecidas, sprint e a restrição `local-only`.
+Repositório e branch desconhecidos ficam `null`; o agente deve verificá-los no
+checkout vivo antes de editar. Não concede autorização para commits, PRs,
+escritas Azure ou eventos `task-completed`.
+
+`Stop` sem conclusão explícita deixa o handoff `blocked`. Depois dos testes, o
+agente informa o resultado pela CLI:
+
+```bash
+python -m kwikledgers_langgraph.handoff_cli \
+  --handoff-id <id> --session-id <sessao> \
+  --status completed --tests-passed --evidence "Testes relevantes aprovados."
+```
+
+Use `--tracking-root` quando o hook informar uma raiz customizada. Uma nova
+solicitação interrompe a associação anterior; não se reutiliza o ID em outra
+sessão. Confirmação é operacional local, não atestado independente dos testes.
+
 O ciclo nativo mantém os detalhes da task, da história pai e a hierarquia
 Story/Spike/Technical Debt/Bug → Feature → Epic consultada pelo FastMCP.
 Descrições, critérios de aceite e lacunas de contexto são preservados no
