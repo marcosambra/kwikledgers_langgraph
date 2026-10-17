@@ -369,6 +369,36 @@ def build_work_item_creation_graph(ports: LifecyclePorts, *, checkpointer: Any,
             raise CreationValidationError("Creation preview differs from authorized request")
         return creation.create(preview, key)
 
-    return build_lifecycle_graph(ports, (LifecycleStep(ACTION, prepare, execute),), name=ACTION,
+    def confirm_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+        created = state["results"][ACTION]
+        if kind != WorkItemKind.TASK:
+            return {"required": False, "snapshot_confirmed": False}
+        identifier = created.get("id", created.get("work_item_id"))
+        responsible = created.get("assigned_to")
+        if not isinstance(responsible, str) or not responsible.strip() or responsible == "Nao atribuido":
+            raise CreationValidationError("Task persisted without a confirmed responsible user; reconcile, do not recreate")
+        summary = source.client.call("get_my_daily_summary", {})
+        source.internal("sync_daily_tracking", {
+            "summary": canonical(summary), "actions_taken": [f"Task {identifier} criada"],
+            "source": "langgraph_work_item_creation",
+        }, f'{state["run_id"]}:snapshot_sync')
+        snapshot = source.client.call("read_tracking_snapshot", {}).get("task_control_data")
+
+        def matches(value: Any) -> bool:
+            if isinstance(value, list):
+                return any(matches(item) for item in value)
+            if not isinstance(value, dict):
+                return False
+            if value.get("id") == identifier and value.get("assigned_to") == responsible:
+                return True
+            return any(matches(item) for item in value.values() if isinstance(item, (dict, list)))
+
+        if not matches(snapshot):
+            raise CreationValidationError("Task persisted, but refreshed snapshot lacks the Task or responsible user")
+        return {"work_item_id": identifier, "assigned_to": responsible,
+                "direct_url": created.get("browser_url"), "persisted": True, "snapshot_confirmed": True}
+
+    return build_lifecycle_graph(ports, (LifecycleStep(ACTION, prepare, execute),
+                                       LifecycleStep("confirm_snapshot", confirm_snapshot, post_execution=True)), name=ACTION,
                                  checkpointer=checkpointer, context_resolver=resolve,
                                  required_context=("repository", "creation_kind", "creation_payload"))

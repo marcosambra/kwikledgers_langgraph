@@ -30,6 +30,12 @@ passos. O runtime ainda exige contexto/hierarquia válidos, início de história
 concluído, plano inalterado, testes aprovados e a mesma árvore testada antes
 do commit. Horas e fechamento mantêm suas prévias e aprovações independentes.
 
+Após criar uma Task, o lifecycle sincroniza o resumo nativo e consulta o
+snapshot persistido para confirmar ID e responsável. Escrita concluída não é
+confirmação do snapshot: falha nessa etapa retorna `reconciliation_required`,
+preserva o resultado da criação e não cria o item novamente. Isso comprova o
+snapshot, não que uma janela da extensão esteja aberta ou já tenha renderizado.
+
 ## Contexto Da Task
 
 ### Handoff da extensão para o Copilot

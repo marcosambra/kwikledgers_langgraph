@@ -46,6 +46,8 @@ class CreationHarness:
         self.addCleanup(self.journal.close)
         self.parent = {"id": 10, "revision": 4, "work_item_type": "User Story", "project": "KL"}
         self.effects = []
+        self.snapshot_available = True
+        self.snapshot_responsible = "Native User"
         self.client = Mock()
         self.client.call.side_effect = self.call
         self.issuer = Mock(side_effect=self.issue)
@@ -54,7 +56,7 @@ class CreationHarness:
                                return_value=self.approvals)
         approval_clock.start()
         self.addCleanup(approval_clock.stop)
-        self.gateway = LifecycleGateway(self.client, self.journal, self.issuer, Mock())
+        self.gateway = LifecycleGateway(self.client, self.journal, self.issuer, Mock(return_value="test:runtime"))
         tracking = Mock()
         tracking.record.side_effect = lambda event, key: self.journal.put(key + ":event", event)
         self.ports = LifecyclePorts(context=Mock(), tracking=tracking, approvals=self.approvals,
@@ -63,12 +65,19 @@ class CreationHarness:
         self.checkpoint = SignedLifecycleCheckpointer(self.journal)
 
     def call(self, name, arguments):
+        if name in ("get_my_daily_summary", "read_tracking_snapshot"):
+            summary = {"items": [{"id": 42, "assigned_to": self.snapshot_responsible}]
+                       if self.snapshot_available else []}
+            return summary if name == "get_my_daily_summary" else {"task_control_data": summary}
+        if name == "sync_daily_tracking":
+            return {"synced": True}
         if name == "get_story_details":
             return deepcopy(self.parent)
         if name != "create_work_item" or not arguments.get("execution_capability"):
             raise AssertionError("Unexpected or unauthorized mutation")
         self.effects.append(deepcopy(arguments))
-        return {"id": 42, "revision": 1, "skipped_fields": []}
+        return {"id": 42, "revision": 1, "skipped_fields": [], "assigned_to": "Native User",
+                "browser_url": "https://dev.azure.com/KL/_workitems/edit/42"}
 
     def issue(self, state, *, action, capability_name, arguments):
         self.assertEqual(action, ACTION)
@@ -91,6 +100,30 @@ class CreationHarness:
 
 
 class WorkItemCreationTests(CreationHarness, TestCase):
+    def test_task_completion_confirms_persisted_snapshot_and_responsible(self):
+        graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
+                                             "parent_work_item_id": 10})
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "completed")
+        confirmation = result["results"]["confirm_snapshot"]
+        self.assertTrue(confirmation["persisted"])
+        self.assertTrue(confirmation["snapshot_confirmed"])
+        self.assertEqual(confirmation["direct_url"], "https://dev.azure.com/KL/_workitems/edit/42")
+        self.assertEqual(len(self.effects), 1)
+
+    def test_missing_or_differently_assigned_task_in_snapshot_requires_reconciliation(self):
+        for available, responsible in ((False, "Native User"), (True, "Another User")):
+            with self.subTest(available=available, responsible=responsible):
+                self.snapshot_available, self.snapshot_responsible = available, responsible
+                graph = self.graph({**self.arguments, "work_item_type": "Task", "parent_work_item_id": 10})
+                config = {"configurable": {"thread_id": f"{self.id()}:{available}"}}
+                first = graph.invoke({"request": {}}, config)
+                result = self.approve(graph, config, first)
+                self.assertEqual(result["outcome"], "reconciliation_required")
+                self.assertEqual(result["results"][ACTION]["id"], 42)
+                self.assertNotIn("confirm_snapshot", result["results"])
+        self.assertEqual(len(self.effects), 2)
+
     def test_exact_native_schema(self):
         self.assertEqual(len(NATIVE_FIELDS), 15)
         for field in ("expected_revision", "expected_revisions", "execution_capability", "approved", "fields", "Custom.Priority"):

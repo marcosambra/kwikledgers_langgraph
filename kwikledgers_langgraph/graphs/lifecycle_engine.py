@@ -28,6 +28,7 @@ class LifecycleStep:
     name: str
     prepare: Prepare
     execute: Execute | None = None
+    post_execution: bool = False
 
 
 def preview_digest(preview: dict[str, Any]) -> str:
@@ -129,7 +130,9 @@ def build_lifecycle_graph(
             except GraphInterrupt:
                 raise
             except Exception:
-                return _failure(ports, state, step.name)
+                persisted = any(previous.execute is not None and previous.name in state.get("results", {})
+                                for previous in steps)
+                return _failure(ports, state, step.name, reconciliation=step.post_execution and persisted)
 
         graph.add_node(preview_node, prepare)
         if step.execute is None:
