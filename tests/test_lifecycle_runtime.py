@@ -481,12 +481,11 @@ class OperationalLifecycleTests(TestCase):
         self.finish_start()
         self.thread += ":task"
         self.open_runtime("task_cycle")
-        result = self.start()
-        self.assertEqual(result["pending_approval"]["action"], "implement")
-        result = self.approve(result)
-        self.assertEqual(result["pending_approval"]["action"], "commit")
         self.now += timedelta(hours=1, minutes=1)
-        result = self.approve(result)
+        result = self.start()
+        self.tasks.implement.assert_called_once()
+        self.tasks.test.assert_called_once()
+        self.tasks.commit.assert_called_once()
         self.assertEqual(result["pending_approval"]["preview"]["completed_work_hours"], 2)
         self.assertEqual(result["pending_approval"]["action"], "hours")
         hours_revision = result["pending_approval"]["preview"]["expected_revision"]
@@ -505,7 +504,7 @@ class OperationalLifecycleTests(TestCase):
         self.finish_start()
         self.thread += ":task"
         self.open_runtime("task_cycle")
-        result = self.approve(self.approve(self.approve(self.start())))
+        result = self.approve(self.start())
         self.assertEqual(result["pending_approval"]["action"], "close")
         self.client.items[11]["revision"] += 1
         result = self.approve(result)

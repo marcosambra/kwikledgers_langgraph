@@ -24,6 +24,12 @@ O host consulta `python -m kwikledgers_langgraph.state_persistence --inspect
 workflow. No fechamento, `--work-kind fix`, `--fix-summary` e `--origin-task-id`
 propagam o contexto da correção para a política existente de Task própria.
 
+No `task_cycle`, o plano configurado pelo operador autoriza implementação,
+testes e commit locais contínuos. Não há confirmações redundantes para esses
+passos. O runtime ainda exige contexto/hierarquia válidos, início de história
+concluído, plano inalterado, testes aprovados e a mesma árvore testada antes
+do commit. Horas e fechamento mantêm suas prévias e aprovações independentes.
+
 ## Contexto Da Task
 
 ### Handoff da extensão para o Copilot

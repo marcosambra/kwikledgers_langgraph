@@ -132,11 +132,9 @@ class LifecycleProcessTests(TestCase):
 
     def test_task_cycle_orders_tests_commit_hours_close(self):
         result = self.start("task_cycle", {"code": "untrusted", "command": "git reset --hard"})
-        self.tasks.implement.assert_not_called()
-        result = self.approve(result)
+        self.tasks.implement.assert_called_once()
         self.tasks.test.assert_called_once()
-        self.tasks.commit.assert_not_called()
-        result = self.approve(result)
+        self.tasks.commit.assert_called_once()
         self.assertEqual(result["pending_approval"]["action"], "hours")
         self.assertEqual(result["pending_approval"]["preview"]["completed_work_hours"], 2)
         self.work_items.hours.assert_not_called()
@@ -151,7 +149,7 @@ class LifecycleProcessTests(TestCase):
 
     def test_failed_tests_prevent_commit_hours_and_close(self):
         self.tasks.test.return_value = {"passed": False, "evidence": "failure"}
-        result = self.approve(self.start("task_cycle"))
+        result = self.start("task_cycle")
         self.assertEqual(result["outcome"], "blocked")
         self.tasks.commit.assert_not_called()
         self.work_items.hours.assert_not_called()
@@ -159,7 +157,7 @@ class LifecycleProcessTests(TestCase):
 
     def test_no_commit_receipt_prevents_hours(self):
         self.tasks.commit.return_value = {}
-        result = self.approve(self.approve(self.start("task_cycle")))
+        result = self.start("task_cycle")
         self.assertEqual(result["outcome"], "blocked")
         self.work_items.hours.assert_not_called()
 

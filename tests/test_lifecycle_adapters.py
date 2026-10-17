@@ -76,6 +76,35 @@ class ExplicitLocalApprovalTests(TestCase):
         self.assertFalse(SignedReceiptApproval(APPROVAL_KEY).verify(self.pending, receipt))
 
 
+class LocalOperatorTaskTests(TestCase):
+    def test_authorized_local_plan_runs_without_azure_approval_and_checks_tested_tree(self):
+        with TemporaryDirectory() as directory:
+            journal = LifecycleJournal(Path(directory) / "local.db")
+            self.addCleanup(journal.close)
+            branches = Mock()
+            branches.path.return_value = Path(directory)
+            plan = OperatorTaskPlan("plan", "payment", 10, 11, ("owned.py",),
+                                    ("implement",), (("test",),), "Local change")
+            tasks = OperatorTasks((plan,), branches, journal)
+            context = {"repository": "payment", "story_id": 10, "task_id": 11}
+            state = {"run_id": "run", "observability": {"active_run_id": "run"},
+                     "context": context, "results": {"plan": tasks.plan(context)}}
+            with lifecycle_scope(state), patch.object(tasks, "_run", return_value={"returncode": 0}):
+                self.assertTrue(tasks.implement("plan", key="run:implement")["implemented"])
+            with lifecycle_scope(state), patch.object(tasks, "_run", return_value={"returncode": 0}), \
+                    patch.object(tasks, "_tree", return_value="tested"):
+                state["results"]["test"] = tasks.test("plan", key="run:test")
+            with lifecycle_scope(state), patch.object(tasks, "_tree", return_value="changed"), \
+                    patch("kwikledgers_langgraph.lifecycle_adapters.git") as command:
+                with self.assertRaisesRegex(ValueError, "unchanged"):
+                    tasks.commit("plan", 11, key="run:commit")
+                command.assert_not_called()
+            with lifecycle_scope(state), patch.object(tasks, "_tree", return_value="tested"), \
+                    patch("kwikledgers_langgraph.lifecycle_adapters.git", side_effect=(
+                        "owned.py", "", "owned.py", "", "commit")):
+                self.assertEqual(tasks.commit("plan", 11, key="run:commit")["commit"], "commit")
+
+
 class LocalJournalTests(TestCase):
     def test_journal_rejects_symlinks_and_shared_writable_directories(self):
         with TemporaryDirectory() as directory:

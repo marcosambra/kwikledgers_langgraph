@@ -713,12 +713,12 @@ class OperatorTasks:
             "hierarchy_context": context.get("hierarchy_context")}
 
     def implement(self, plan_id: str, *, key: str) -> dict[str, Any]:
-        state = active_state("implement")
+        state = active_state()
         plan = self._plan(plan_id)
-        if state["verified_lifecycle_binding"]["preview"] != self.plan(state["context"]):
+        if state.get("results", {}).get("plan") != self.plan(state["context"]):
             raise ValueError("Operator plan differs from approved plan")
         def execute() -> dict[str, Any]:
-            active_state("implement")
+            active_state()
             evidence = self._run(plan, plan.implementation_command)
             if evidence["returncode"] != 0:
                 raise RuntimeError("Trusted implementation command failed")
@@ -738,23 +738,24 @@ class OperatorTasks:
         return self.journal.once(key, {"plan_id": plan_id}, execute)
 
     def commit(self, plan_id: str, task_id: int, *, key: str) -> dict[str, Any]:
-        state = active_state("commit")
+        state = active_state()
         plan = self._plan(plan_id)
         tests = self.journal.get(f'{state["run_id"]}:test:result')
         if (task_id != plan.task_id or not tests or tests["result"].get("passed") is not True
                 or tests["result"].get("tree_digest") != self._tree(plan)
-                or state["verified_lifecycle_binding"]["preview"].get("test_evidence") != tests["result"]["evidence"]):
+                or state.get("results", {}).get("plan") != self.plan(state["context"])
+                or state.get("results", {}).get("test", {}).get("evidence") != tests["result"]["evidence"]):
             raise ValueError("Commit requires unchanged authenticated green test evidence")
         repository = self.branches.path(plan.repository)
         staged = git(repository, "diff", "--cached", "--name-only").splitlines()
         if not set(staged) <= set(plan.files):
             raise ValueError("Unrelated staged files block commit")
         def execute() -> dict[str, Any]:
-            active_state("commit")
+            active_state()
             git(repository, "add", "--", *plan.files)
             if not git(repository, "diff", "--cached", "--name-only"):
                 raise ValueError("No authorized changes to commit")
-            active_state("commit")
+            active_state()
             git(repository, "commit", "-m", f"KL-{task_id}: {plan.logic}")
             result = {"commit": git(repository, "rev-parse", "HEAD"), "tests_passed": True, "plan_id": plan_id}
             self.journal.put(f'task:{plan.repository}:{task_id}:commit', result)
