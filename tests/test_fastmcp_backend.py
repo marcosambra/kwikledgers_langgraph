@@ -297,13 +297,12 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
             self.assertEqual(arguments, {"story_id": 42, "repository_name": "repo", "source_branch": "feature/test"})
         self.assertIn("execution_capability", request)
 
-    def test_mutations_require_token_and_keep_approved_technical_fields(self) -> None:
+    def test_branch_mutation_requires_token_and_keeps_approved_technical_fields(self) -> None:
         client = RecordingClient()
         request = {"story_id": 42, "repository_name": "repo", "source_branch": "feature/test",
                    "expected_revisions": {"42": 5}, "pending_approval": {"approved": True}}
         for adapter, method, capability in (
             (FastMCPStoryBranchAssociationAdapter(client), "associate_story_branch", "associate_story_branch"),
-            (FastMCPStoryPullRequestAdapter(client), "create_story_pull_request", "create_story_pull_request"),
         ):
             with self.assertRaises(ValueError):
                 getattr(adapter, method)(request)
@@ -312,7 +311,16 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
             self.assertEqual(client.calls[-1], (capability, {
                 **technical_arguments_for_capability(capability, approved), "execution_capability": "token",
             }))
-        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_isolated_pr_and_closure_refuse_writes_even_with_a_token(self) -> None:
+        client = RecordingClient()
+        for adapter, method in ((FastMCPStoryPullRequestAdapter(client), "create_story_pull_request"),
+                                (FastMCPTaskClosureAdapter(client), "close_task")):
+            for token in (None, "token"):
+                with self.subTest(method=method, token=token), self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
+                    getattr(adapter, method)({"execution_capability": token})
+        self.assertEqual(client.calls, [])
 
     def test_status_preview_uses_native_revision_not_synthetic_text(self) -> None:
         client = RecordingClient({"id": 42, "rev": 7, "fields": {"System.Title": "Story", "System.State": "Desenvolvimento"}})
@@ -340,26 +348,27 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
                 FastMCPStoryStatusTransitionAdapter(client).update_story_status(invalid)
         self.assertEqual(len(client.calls), 1)
 
-    def test_closure_is_one_atomic_call_preserving_empty_remaining_work(self) -> None:
+    def test_closure_mapper_preserves_empty_remaining_work(self) -> None:
         for remaining in (None, 0, 2):
             client = RecordingClient()
             request = {"task_id": 9, "execution_capability": "token", "preview": {
                 "task_id": 9, "closure_allowed": True, "completed_work_hours": 3,
                 "remaining_work_hours": remaining, "task_revision": 4,
             }}
-            result = FastMCPTaskClosureAdapter(client).close_task(request)
+            result = technical_arguments_for_capability("update_work_item_effort", request)
             arguments = {"work_item_id": 9, "completed_work_hours": 3, "status": "Closed",
-                         "expected_revision": 4, "execution_capability": "token"}
+                         "expected_revision": 4}
             if remaining is not None:
                 arguments["remaining_work_hours"] = remaining
-            self.assertEqual(client.calls, [("update_work_item_effort", arguments)])
-            self.assertEqual(result["status"], "closed")
+            self.assertEqual(result, arguments)
+            self.assertEqual(client.calls, [])
 
     def test_closure_preview_requires_fresh_native_revision(self) -> None:
         client = RecordingClient({"id": 9, "revision": 4})
         adapter = FastMCPTaskClosureAdapter(client)
         request = {"task_id": 9, "expected_revision": 999}
-        self.assertEqual(adapter.preview_task_closure(request), {"task_id": 9, "task_revision": 4})
+        self.assertEqual(adapter.preview_task_closure(request),
+                         {"task_id": 9, "task_revision": 4, "execution_requires_lifecycle": "task_cycle"})
         client.data = {"id": 9, "revision": 5}
         self.assertEqual(adapter.preview_task_closure(request)["task_revision"], 5)
         self.assertEqual(client.calls, [("get_story_details", {"story_id": 9})] * 2)
@@ -386,7 +395,8 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
         for update in ({"closure_allowed": False}, {"task_id": 8}, {"task_revision": None},
                        {"completed_work_hours": None}, {"completed_work_hours": float("nan")}):
             with self.subTest(update=update), self.assertRaises(ValueError):
-                FastMCPTaskClosureAdapter(client).close_task({"task_id": 9, "preview": {**preview, **update}, "execution_capability": "token"})
+                technical_arguments_for_capability("update_work_item_effort",
+                    {"task_id": 9, "preview": {**preview, **update}, "execution_capability": "token"})
         self.assertEqual(client.calls, [])
 
     def test_internal_tracking_and_notification_tokens_bind_exact_arguments(self) -> None:
