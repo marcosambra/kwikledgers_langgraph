@@ -101,6 +101,7 @@ def graph_catalog() -> list[dict[str, Any]]:
                        "label": str(edge.data) if edge.data is not None else ""}
                       for edge in drawable.edges],
             "mermaid": drawable.draw_mermaid(),
+            "operation": _operational_metadata(specification),
         })
     return catalog
 

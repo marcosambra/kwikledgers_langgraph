@@ -139,7 +139,10 @@ permanece `"not_performed"`, e nenhuma integração ou workflow é executado.
 As capacidades reservadas a lifecycle aparecem separadamente, com execução
 atômica direta desabilitada. O catálogo não encaminha operações, concede
 aprovação nem habilita capacidades ausentes. A invocação sem argumentos mantém
-o formato anterior das 12 topologias.
+o formato de lista das 12 topologias. Cada topologia também fornece o campo
+aditivo `operation`, com os mesmos metadados usados pelo painel de grafos.
+Consumidores anteriores podem ignorar esse campo; consumidores novos devem
+aceitar sua ausência ao consultar versões antigas do runtime.
 
 ## Modo de repositorio standalone
 

@@ -26,6 +26,9 @@ class GraphCatalogTests(TestCase):
                 self.assertNotIn("invoke", graph)
         start = next(graph for graph in catalog if graph["id"] == "story_start")
         self.assertTrue(any("gate" in node["id"] for node in start["nodes"]))
+        entries = {flow["id"]: flow for flow in operational_catalog()["flows"]}
+        for graph in catalog:
+            self.assertEqual(graph["operation"], entries[graph["id"]])
 
     def test_inspection_ports_deny_effects(self):
         with self.assertRaisesRegex(RuntimeError, "cannot execute"):
