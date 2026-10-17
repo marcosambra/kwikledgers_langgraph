@@ -11,11 +11,30 @@ from kwikledgers_langgraph.state_persistence import (
     STATE_SIGNING_KEY_ENV_VAR,
     StateFileError,
     load_state_file,
+    inspect_approval,
     write_state_file,
 )
 
 
 class StatePersistenceTestCase(unittest.TestCase):
+    def test_public_inspection_checks_the_pending_binding_without_execution(self) -> None:
+        from kwikledgers_langgraph.guardrails import build_bound_approval
+
+        state = {"observability": {"active_run_id": "run", "backend_name": "fastmcp"}}
+        state["pending_approval"] = build_bound_approval(
+            state, action="task_closure.execute", preview={"task_id": 1},
+            approved=False, approval_source="test")
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "preview.json")
+            write_state_file(state, path)
+            inspected = inspect_approval(path)
+            self.assertEqual(inspected["version"], 1)
+            self.assertEqual(inspected["pending"], state["pending_approval"])
+            state["pending_approval"]["preview"]["task_id"] = 2
+            write_state_file(state, path)
+            with self.assertRaises(StateFileError):
+                inspect_approval(path)
+
     def test_write_and_load_unsigned_read_only_state_without_signing_key(self) -> None:
         state = {"summary": {"counts": {"assigned_items": 1}}, "source": "test"}
 

@@ -43,6 +43,12 @@ def _build_request(arguments: argparse.Namespace) -> TaskClosureRequest:
         request["remaining_work_hours"] = arguments.remaining_work_hours
     if arguments.comment:
         request["comment"] = arguments.comment
+    if getattr(arguments, "work_kind", None):
+        request["work_kind"] = arguments.work_kind
+    if getattr(arguments, "fix_summary", None):
+        request["fix_summary"] = arguments.fix_summary
+    if getattr(arguments, "origin_task_id", None) is not None:
+        request["origin_task_id"] = arguments.origin_task_id
     return request
 
 
@@ -196,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Horas restantes a lancar. Se omitido, o campo permanece vazio (nao forca 0).",
     )
     parser.add_argument("--comment", default=None, help="Comentario opcional registrado no work item.")
+    parser.add_argument("--work-kind", choices=("implementation", "fix"), default=None)
+    parser.add_argument("--fix-summary", default=None, help="Problema corrigido na Task própria.")
+    parser.add_argument("--origin-task-id", type=int, default=None, help="Task de origem da correção.")
     parser.add_argument("--source", default="task-closure-cli", help="Origem registrada no estado do runtime.")
     parser.add_argument(
         "--backend",

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from kwikledgers_langgraph.adapters import TaskClosurePorts
+from kwikledgers_langgraph.guardrails import build_bound_approval
 from kwikledgers_langgraph.task_closure_cli import (
     _build_initial_state,
     _build_request,
@@ -85,6 +86,13 @@ class FakeTaskClosureAdapter:
 
 
 class TaskClosureCliTestCase(unittest.TestCase):
+    def test_fix_fields_reach_the_closure_policy(self) -> None:
+        request = _build_request(_build_arguments(work_kind="fix", fix_summary="Regression",
+                                                  origin_task_id=120300))
+        self.assertEqual(request["work_kind"], "fix")
+        self.assertEqual(request["fix_summary"], "Regression")
+        self.assertEqual(request["origin_task_id"], 120300)
+
     def setUp(self) -> None:
         self.signing_key_patcher = patch.dict(
             os.environ,
@@ -155,6 +163,10 @@ class TaskClosureCliTestCase(unittest.TestCase):
             },
             "observability": {"active_run_id": "run-456", "flow_name": "task_closure"},
         }
+        pending = saved_state["pending_approval"]
+        saved_state["pending_approval"] = build_bound_approval(
+            saved_state, action=pending["action"], preview=pending["preview"],
+            request_id=pending["request_id"], approved=False, approval_source="pending_review")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = f"{temp_dir}/saved-state.json"
@@ -168,7 +180,7 @@ class TaskClosureCliTestCase(unittest.TestCase):
             )
 
         self.assertEqual(state["approval_confirmation"]["request_id"], "req-456")
-        self.assertEqual(state["approval_confirmation"]["approval_source"], "human_cli_confirmation")
+        self.assertEqual(state["approval_confirmation"]["subject"], "human_cli_confirmation")
         self.assertEqual(state["observability"]["active_run_id"], "run-456")
 
     def test_run_task_closure_invokes_runtime_with_built_state(self) -> None:
@@ -215,8 +227,8 @@ class TaskClosureCliTestCase(unittest.TestCase):
                 saved_state = json.load(saved_file)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-456")
-        self.assertIn("signature", saved_state)
+        self.assertEqual(saved_state["pending_approval"]["request_id"], "req-456")
+        self.assertNotIn("signature", saved_state)
 
 if __name__ == "__main__":
     unittest.main()

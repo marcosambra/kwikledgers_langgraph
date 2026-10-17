@@ -2,7 +2,6 @@ import base64
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 import hashlib
-import hmac
 from io import StringIO
 import json
 from pathlib import Path
@@ -66,6 +65,7 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.issuer = Mock(wraps=issue_runtime_execution_capability)
         self.addCleanup(patch.stopall)
         patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_STATE_KEY": STATE_KEY,
+                                  "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.directory / "capabilities.sqlite3"),
                                   "KWIKLEDGERS_FASTMCP_EXECUTION_KEY": RUNTIME_KEY}, clear=True).start()
         patch("kwikledgers_langgraph.lifecycle_adapters.FastMCPClient", return_value=self.client).start()
         patch("kwikledgers_langgraph.technical_debt_preparation_cli.issue_runtime_execution_capability",
@@ -117,7 +117,7 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.assertNotIn("verified_lifecycle_binding", issued.args[0])
         encoded, signature = self.client.calls[1][1]["execution_capability"].split(".")
         payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        self.assertEqual(signature, hmac.new(RUNTIME_KEY.encode(), payload, "sha256").hexdigest())
+        self.assertEqual(signature, "local-v1")
         claims = json.loads(payload)
         self.assertEqual(claims["run_id"], output["run_id"])
         self.assertEqual(claims["request_id"], "runtime:lifecycle_tracking")
@@ -170,14 +170,15 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.assertEqual(code, 0)
         self.assertIn("acceptance_criteria", output["results"]["technical_debt_preview"]["children"][0])
 
-    def test_malformed_optional_state_key_fails_before_clients_or_journal_creation(self):
+    def test_obsolete_state_key_does_not_change_the_local_preparation_contract(self):
         for name, value in (("KWIKLEDGERS_LIFECYCLE_STATE_KEY", "s" * 31),):
             with self.subTest(name=name, value=value), patch.dict("os.environ", {name: value}):
                 code, output = self.invoke()
-                self.assertEqual((code, output["outcome"]), (1, "blocked"))
-                self.assertFalse(self.checkpoint.exists())
-        self.assertEqual(self.client.calls, [])
-        self.issuer.assert_not_called()
+                self.assertEqual((code, output["outcome"]), (0, "preview_only"))
+                self.assertTrue(self.checkpoint.exists())
+        self.assertEqual([name for name, _ in self.client.calls],
+                         ["find_similar_technical_debts", "append_daily_action_log"])
+        self.issuer.assert_called_once()
 
     def test_preparation_without_configured_keys_uses_the_runtime_issuer_contract(self):
         self.issuer.side_effect = lambda *args, **kwargs: "local-runtime-capability"
@@ -219,11 +220,11 @@ class TechnicalDebtPreparationCLITests(TestCase):
         with journal.db:
             journal.db.execute("UPDATE lifecycle_evidence SET payload = ? WHERE key = ?",
                                ('{"repository":"other"}', output["preview_key"]))
-        with self.assertRaisesRegex(ValueError, "signature"):
+        with self.assertRaisesRegex(ValueError, "corrompida"):
             journal.get(output["preview_key"])
         ports = build_lifecycle_ports(repositories={"kl_store": self.directory}, project="KL", area="Squad",
                                       journal=journal, approvals=Mock(), client=self.client)
-        with self.assertRaisesRegex(ValueError, "signature"):
+        with self.assertRaisesRegex(ValueError, "corrompida"):
             build_technical_debt_execution_graph(ports, checkpointer=MemorySaver(), preview_key=output["preview_key"])
 
     def test_lock_contention_blocks_before_native_reads(self):

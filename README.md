@@ -19,6 +19,10 @@ A aprovação local usa prévia separada e retomada explícita com
 status e fechamento. Os guardrails e o emissor de capabilities verificam a
 mesma confirmação vinculada à ação, prévia, run e request antes da escrita.
 Recibos externos não são aceitos; estados antigos com recibo exigem nova prévia.
+O host consulta `python -m kwikledgers_langgraph.state_persistence --inspect
+<arquivo>` para obter `version: 1`, `pending` e `result`, sem executar o
+workflow. No fechamento, `--work-kind fix`, `--fix-summary` e `--origin-task-id`
+propagam o contexto da correção para a política existente de Task própria.
 
 ## Contexto Da Task
 

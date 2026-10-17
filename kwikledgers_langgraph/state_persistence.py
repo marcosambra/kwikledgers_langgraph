@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import argparse
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -61,3 +63,38 @@ def write_state_file(state: dict[str, Any], state_file_path: str) -> None:
     with output_path.open("w", encoding="utf-8") as state_file:
         json.dump(state, state_file, indent=2, ensure_ascii=False, allow_nan=False)
         state_file.write("\n")
+
+
+def inspect_approval(state_file_path: str) -> dict[str, Any]:
+    state = load_state_file(state_file_path)
+    if state.get("errors"):
+        raise StateFileError("O fluxo falhou. Consulte o resultado salvo antes de repetir a operação.")
+    if state.get("observability", {}).get("backend_name") != "fastmcp":
+        raise StateFileError("Backend de aprovação inválido.")
+    pending = state.get("pending_approval", {})
+    if pending:
+        if not isinstance(pending, dict) or not isinstance(pending.get("preview"), dict):
+            raise StateFileError("Prévia inválida.")
+        digest = sha256(json.dumps(pending["preview"], sort_keys=True, allow_nan=False).encode()).hexdigest()
+        if (pending.get("preview_digest") != digest
+                or not state.get("observability", {}).get("active_run_id")
+                or pending.get("run_id") != state["observability"]["active_run_id"]
+                or any(not isinstance(pending.get(field), str) or not pending[field].strip()
+                       for field in ("action", "request_id", "previewed_at"))
+                or type(pending.get("approved")) is not bool
+                or "receipt" in pending):
+            raise StateFileError("A prévia não corresponde à execução atual. Gere uma nova prévia.")
+    return {"version": 1, "pending": pending,
+            "result": state.get("task_closure_result", state.get("pull_request_result", {}))}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Inspecionar uma prévia local sem executar o workflow.")
+    parser.add_argument("--inspect", required=True, metavar="STATE_FILE")
+    args = parser.parse_args(argv)
+    print(json.dumps(inspect_approval(args.inspect), ensure_ascii=False, allow_nan=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -63,6 +63,9 @@ class TaskClosureRequest(TypedDict, total=False):
     completed_work_hours: float
     remaining_work_hours: float
     comment: str
+    work_kind: str
+    fix_summary: str
+    origin_task_id: int
 
 
 class DayEndClosureRequest(TypedDict, total=False):

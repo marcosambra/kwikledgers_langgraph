@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from kwikledgers_langgraph.guardrails import build_bound_approval
 from unittest.mock import patch
 
 from kwikledgers_langgraph.adapters import StoryBranchAssociationPorts
@@ -128,6 +129,10 @@ class StoryBranchCliTestCase(unittest.TestCase):
             },
             "observability": {"active_run_id": "run-123", "flow_name": "story_branch_association"},
         }
+        pending = saved_state["pending_approval"]
+        saved_state["pending_approval"] = build_bound_approval(
+            saved_state, action=pending["action"], preview=pending["preview"],
+            request_id=pending["request_id"], approved=False, approval_source="pending_review")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = f"{temp_dir}/saved-state.json"
@@ -141,7 +146,7 @@ class StoryBranchCliTestCase(unittest.TestCase):
             )
 
         self.assertEqual(state["approval_confirmation"]["request_id"], "req-123")
-        self.assertEqual(state["approval_confirmation"]["approval_source"], "human_cli_confirmation")
+        self.assertEqual(state["approval_confirmation"]["subject"], "human_cli_confirmation")
         self.assertEqual(state["observability"]["active_run_id"], "run-123")
 
     def test_run_story_branch_association_invokes_runtime_with_built_state(self) -> None:
@@ -193,8 +198,8 @@ class StoryBranchCliTestCase(unittest.TestCase):
                 saved_state = json.load(saved_file)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(saved_state["state"]["pending_approval"]["request_id"], "req-123")
-        self.assertIn("signature", saved_state)
+        self.assertEqual(saved_state["pending_approval"]["request_id"], "req-123")
+        self.assertNotIn("signature", saved_state)
 
 if __name__ == "__main__":
     unittest.main()
