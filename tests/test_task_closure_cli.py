@@ -86,6 +86,21 @@ class FakeTaskClosureAdapter:
 
 
 class TaskClosureCliTestCase(unittest.TestCase):
+    def test_public_policy_requires_own_fix_task_and_computed_hours(self) -> None:
+        from kwikledgers_langgraph.task_closure_policy import build_verified_task_closure_preview
+
+        base = {"task_id": 120310, "start_time": "2026-07-10T11:00:00+00:00",
+                "close_time": "2026-07-10T12:00:01+00:00", "work_kind": "fix",
+                "fix_summary": "Regression", "origin_task_id": 120300}
+        for changed in ({"origin_task_id": None}, {"origin_task_id": 120310},
+                        {"fix_summary": ""}, {"completed_work_hours": 1}):
+            with self.subTest(changed=changed):
+                self.assertFalse(build_verified_task_closure_preview({**base, **changed})["closure_allowed"])
+        preview = build_verified_task_closure_preview(base)
+        self.assertTrue(preview["closure_allowed"])
+        self.assertEqual(preview["completed_work_hours"], 2)
+        self.assertIsNone(preview["remaining_work_hours"])
+
     def test_fix_fields_reach_the_closure_policy(self) -> None:
         request = _build_request(_build_arguments(work_kind="fix", fix_summary="Regression",
                                                   origin_task_id=120300))

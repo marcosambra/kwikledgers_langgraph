@@ -60,7 +60,7 @@ def _operational_metadata(specification: GraphSpecification) -> dict[str, Any]:
     resume_option = None
     if specification.approval == "explicit_after_preview":
         resume_option = "--resume" if module == "lifecycle_cli" else "--resume-state-file"
-    return {
+    metadata = {
         "id": specification.name,
         "entry_point": entry,
         "help_command": [*entry, "--help"] if entry is not None else None,
@@ -79,6 +79,13 @@ def _operational_metadata(specification: GraphSpecification) -> dict[str, Any]:
             if specification.approval == "explicit_after_preview" else ["successful_read_or_preview"]
         ),
     }
+    route = {"story_pull_request": "story_completion", "task_closure": "task_cycle"}.get(specification.name)
+    if route:
+        metadata.update({"execution_requires_lifecycle": route,
+                         "execution_entry_point": _entry_point("lifecycle_cli", route),
+                         "approval": "preview_only", "resume_option": None, "approval_option": None,
+                         "completion_criteria": ["preview_available", "execute_through_required_lifecycle"]})
+    return metadata
 
 
 class InspectionPort:

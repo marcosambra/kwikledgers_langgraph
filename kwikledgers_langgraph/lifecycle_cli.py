@@ -29,6 +29,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--story-id", type=int)
     result.add_argument("--task-id", type=int)
     result.add_argument("--repository-name")
+    result.add_argument("--work-kind", choices=("implementation", "fix"))
+    result.add_argument("--fix-summary")
+    result.add_argument("--origin-task-id", type=int)
     result.add_argument("--preview-key")
     result.add_argument("--resume", action="store_true")
     resume = result.add_mutually_exclusive_group()
@@ -123,7 +126,8 @@ def run_cli(graph: Any, *, thread_id: str, request: dict[str, Any] | None = None
             raise ValueError("Existing interrupted lifecycle required")
         context = previous.values.get("context", {})
         expected = {"story_id": context.get("story_id"), "task_id": context.get("task_id"),
-                    "repository_name": context.get("repository")}
+                    "repository_name": context.get("repository"),
+                    **{field: context.get(field) for field in ("work_kind", "fix_summary", "origin_task_id")}}
         if request and any(value is not None and value != expected.get(field) for field, value in request.items()):
             raise ValueError("Resume cannot change authorized lifecycle context")
         pending = previous.values.get("pending_approval", {})
@@ -199,7 +203,9 @@ def main(argv: list[str] | None = None) -> int:
             output = run_cli(graph, thread_id=args.thread_id, resume=args.resume,
                              approval_request_id=args.approval_request_id,
                              branch_type=args.branch_type, request={"story_id": args.story_id,
-                             "task_id": args.task_id, "repository_name": args.repository_name})
+                             "task_id": args.task_id, "repository_name": args.repository_name,
+                             "work_kind": args.work_kind, "fix_summary": args.fix_summary,
+                             "origin_task_id": args.origin_task_id})
             record_cli_metrics(graph.get_state({"configurable": {"thread_id": args.thread_id}}).values, output)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)

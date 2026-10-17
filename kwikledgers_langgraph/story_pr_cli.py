@@ -175,9 +175,9 @@ def _record_runtime_observability(result: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Executa o fluxo LangGraph de preview/criacao de PR da story. "
-            "Use o modo inicial para gerar o preview e salvar o estado; use "
-            "'--resume-state-file' com '--approval-request-id' para confirmar a criação real."
+            "Gera a prévia da PR da story. A escrita nativa exige lifecycle_cli "
+            "story_completion com evidências de implementação, testes e associações. "
+            "Esta entrada isolada não autoriza criação."
         ),
     )
     parser.add_argument("--story-id", type=int, help="ID da story pai.")

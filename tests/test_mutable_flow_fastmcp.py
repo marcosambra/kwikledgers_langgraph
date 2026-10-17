@@ -288,13 +288,13 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
 
 @unittest.skipUnless(LANGGRAPH_AVAILABLE, "langgraph is not installed")
 class MutableFastMCPGraphTests(ReceiptFixture):
-    def cases(self, client: VerifyingClient):
+    def cases(self, client: VerifyingClient, *, include_preview_only: bool = False):
         branch = {"story_id": 42, "repository_name": "repo", "source_branch": "feature/KL-42-test",
                   "related_work_item_ids": [43], "include_child_work_items": True}
         pull_request = {**branch, "what_was_changed": "Change", "affected_processes": "Process",
                         "expected_impacts": "Impact", "important_points": "Review",
                         "mermaid_diagram": "graph TD; A-->B;"}
-        return (
+        cases = (
             (build_story_branch_association_graph(StoryBranchAssociationPorts(FastMCPStoryBranchAssociationAdapter(client))),
              "branch_association", branch, "associate_story_branch", story_branch_cli),
             (build_story_pull_request_graph(StoryPullRequestPorts(FastMCPStoryPullRequestAdapter(client))),
@@ -305,6 +305,24 @@ class MutableFastMCPGraphTests(ReceiptFixture):
              "task_closure", {"task_id": 42, "start_time": "2026-09-30T10:00:00+00:00",
                               "close_time": "2026-09-30T12:01:00+00:00"}, "update_work_item_effort", task_closure_cli),
         )
+        return cases if include_preview_only else (cases[0], cases[2])
+
+    def test_pr_and_task_closure_require_governed_lifecycle_without_offering_approval(self) -> None:
+        client = VerifyingClient()
+        for runtime, prefix, request, _capability, _cli in self.cases(client, include_preview_only=True):
+            if prefix not in {"pull_request", "task_closure"}:
+                continue
+            with self.subTest(flow=prefix):
+                result = runtime.invoke(self.initial(prefix, request))
+                self.assertEqual(result[f"{prefix}_result"]["status"], "lifecycle_required")
+                self.assertEqual(result["pending_approval"], {})
+                self.assertTrue(result["errors"])
+                self.assertTrue(result[f"{prefix}_preview"]["execution_requires_lifecycle"])
+        for adapter, method in ((FastMCPStoryPullRequestAdapter(client), "create_story_pull_request"),
+                                (FastMCPTaskClosureAdapter(client), "close_task")):
+            with self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
+                getattr(adapter, method)({"execution_capability": "cannot-bypass"})
+        self.assertEqual(client.executions, [])
 
     def initial(self, prefix: str, request: dict) -> dict:
         return {f"{prefix}_request": request,
@@ -331,7 +349,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                                                  "completed_work_hours": 3.0, "expected_revision": 7})
                 else:
                     self.assertEqual(arguments, {"story_id": 42, "status": "Aguardando PR", "expected_revision": 7})
-        self.assertEqual(len(client.executions), 4)
+        self.assertEqual(len(client.executions), 2)
 
     def test_all_default_graphs_reject_boolean_and_simulation_bypass(self) -> None:
         client = VerifyingClient()
@@ -362,18 +380,16 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                 self.assertNotEqual(result["pending_approval"]["request_id"], preview["pending_approval"]["request_id"])
         self.assertEqual(client.executions, [])
 
-    def test_task_native_revision_is_read_again_and_implicit_close_time_is_stable(self) -> None:
+    def test_task_preview_reads_native_revision_without_ungoverned_execution(self) -> None:
         client = VerifyingClient()
-        runtime, prefix, request, _capability, _cli = self.cases(client)[3]
+        runtime, prefix, request, _capability, _cli = self.cases(client, include_preview_only=True)[3]
         request.pop("close_time")
         preview = runtime.invoke(self.initial(prefix, request))
-        preview["approval_confirmation"] = self.receipt(preview["pending_approval"])
-        result = runtime.invoke(preview)
-        self.assertEqual(result["task_closure_result"]["status"], "closed")
-        self.assertEqual(result["task_closure_preview"], preview["task_closure_preview"])
-        self.assertEqual([name for name, _arguments in client.calls],
-                         ["get_story_details", "get_story_details", "update_work_item_effort"])
-        self.assertNotIn("remaining_work_hours", client.executions[0][1])
+        self.assertEqual(preview["task_closure_result"]["status"], "lifecycle_required")
+        self.assertEqual(preview["task_closure_preview"]["task_revision"], client.revision)
+        self.assertTrue(preview["task_closure_preview"]["close_time"])
+        self.assertEqual([name for name, _arguments in client.calls], ["get_story_details"])
+        self.assertEqual(client.executions, [])
 
     def test_all_clis_resume_with_explicit_request_and_configured_keys(self) -> None:
         client = VerifyingClient()
@@ -394,7 +410,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                 self.assertFalse(resumed["pending_approval"]["approved"])
                 result = runtime.invoke(resumed)
                 self.assertTrue(result["pending_approval"]["approved"])
-        self.assertEqual(len(client.executions), 4)
+        self.assertEqual(len(client.executions), 2)
 
     def test_all_clis_accept_explicit_resume_without_keys_or_receipts(self) -> None:
         client = VerifyingClient()

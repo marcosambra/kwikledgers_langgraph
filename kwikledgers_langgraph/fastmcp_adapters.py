@@ -247,11 +247,11 @@ class FastMCPStoryBranchAssociationAdapter(_FastMCPAdapter):
 class FastMCPStoryPullRequestAdapter(_FastMCPAdapter):
     def preview_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
         arguments = technical_arguments_for_capability("preview_story_pull_request", request)
-        return self.client.call("preview_story_pull_request", arguments)
+        return {**self.client.call("preview_story_pull_request", arguments),
+                "execution_requires_lifecycle": "story_completion"}
 
     def create_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        arguments = technical_arguments_for_capability("create_story_pull_request", request)
-        return self._execute("create_story_pull_request", arguments, request.get("execution_capability"))
+        raise RuntimeError("PR creation requires lifecycle story_completion with implementation/test evidence.")
 
 
 class FastMCPStoryStatusTransitionAdapter(_FastMCPAdapter):
@@ -299,14 +299,7 @@ class FastMCPTaskClosureAdapter(_FastMCPAdapter):
             raise ValueError("Native task details must include a positive revision.")
         if details.get("task_id", details.get("story_id", details.get("id", task_id))) != task_id:
             raise ValueError("Native task details belong to a different task.")
-        return {"task_id": task_id, "task_revision": revision}
+        return {"task_id": task_id, "task_revision": revision, "execution_requires_lifecycle": "task_cycle"}
 
     def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
-        arguments = technical_arguments_for_capability("update_work_item_effort", request)
-        result = self._execute("update_work_item_effort", arguments, request.get("execution_capability"))
-        return {
-            "status": "closed", "task_id": arguments["work_item_id"],
-            "completed_work_hours": arguments["completed_work_hours"],
-            "remaining_work_hours": arguments.get("remaining_work_hours"),
-            "target_status": "Closed", "changed": True, "effort_result": result,
-        }
+        raise RuntimeError("Task closure requires lifecycle task_cycle with registered start/test/commit evidence.")

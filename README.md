@@ -19,6 +19,21 @@ testes e commit locais contínuos. Não há confirmações redundantes para esse
 passos. O runtime ainda exige contexto/hierarquia válidos, início de história
 concluído, plano inalterado, testes aprovados e a mesma árvore testada antes
 do commit. Horas e fechamento mantêm suas prévias e aprovações independentes.
+O ciclo aceita `--work-kind fix --fix-summary ... --origin-task-id ...` e
+bloqueia implementação sem uma Task própria diferente da origem. Esse contexto
+integra checkpoint e prévias; a retomada não pode alterá-lo. O cálculo público
+é compartilhado com a prévia de fechamento e não aceita substituir o ceil por
+horas arbitrárias; `Remaining Work` ausente não é enviado como zero.
+
+**Migração das entradas isoladas:** `story_pr_cli` e `task_closure_cli` mantêm
+consulta/prévia, mas retornam `lifecycle_required` sem oferecer aprovação para
+escrita nativa. Use `lifecycle_cli story_completion` para PR e
+`lifecycle_cli task_cycle` para execução/fechamento. O payload legado não contém
+evidências suficientes para garantir testes, commit, início e associações;
+uma confirmação isolada não pode contornar essas exigências. No ciclo oficial,
+a PR continua Draft para `stage-pre-prod`, com template do repositório, Mermaid
+ao final, URL validada e aprovação independente para `Aguardando PR`. O fechamento
+diário/hook continua somente prévia; esta entrega não ativa fechamento automático.
 As CLIs menores também persistem resultado e reserva por run/request antes
 da escrita. Repetir uma aprovação concluída reutiliza seu resultado; uma
 tentativa de resultado desconhecido exige reconciliação, sem retry automático.

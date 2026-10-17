@@ -179,6 +179,14 @@ def run_mutation_gate(
     approved_message: str,
 ) -> dict[str, Any]:
     preview = dict(state.get(preview_key, {}))
+    lifecycle = preview.get("execution_requires_lifecycle")
+    if lifecycle:
+        message = f"Execution requires lifecycle {lifecycle}; this entry provides preview only."
+        return {**append_error(state, message),
+                **record_runtime_event(state, node=node, status="blocked", message=message),
+                "pending_approval": {},
+                result_key: {"status": "lifecycle_required", "changed": False,
+                             "preview_available": True, "required_lifecycle": lifecycle}}
     updates = evaluate_operation(
         state,
         action=action,

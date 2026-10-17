@@ -147,6 +147,19 @@ class LifecycleProcessTests(TestCase):
         self.assertEqual(self.tasks.implement.call_args.args, ("trusted-plan",))
         self.assertEqual(self.tasks.commit.call_args.args, ("trusted-plan", 11))
 
+    def test_fix_context_is_checked_before_implementation_and_bound_to_hours_preview(self):
+        result = self.start("task_cycle", {"work_kind": "fix", "fix_summary": "Regression"})
+        self.assertEqual(result["outcome"], "blocked")
+        self.tasks.implement.assert_not_called()
+        self.config = {"configurable": {"thread_id": self.id() + "-valid"}}
+        result = self.start("task_cycle", {"work_kind": "fix", "fix_summary": "Regression",
+                                         "origin_task_id": 9})
+        self.assertEqual(result["pending_approval"]["action"], "hours")
+        self.assertEqual(result["pending_approval"]["preview"]["origin_task_id"], 9)
+        self.assertEqual(result["pending_approval"]["preview"]["work_kind"], "fix")
+        result = self.approve(self.approve(result))
+        self.assertEqual(result["outcome"], "completed")
+
     def test_failed_tests_prevent_commit_hours_and_close(self):
         self.tasks.test.return_value = {"passed": False, "evidence": "failure"}
         result = self.start("task_cycle")

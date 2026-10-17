@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from math import ceil
 from typing import Any
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
-from kwikledgers_langgraph.graphs.story_lifecycle import aware_time, required_ids, _require_ports
+from kwikledgers_langgraph.graphs.story_lifecycle import required_ids, _require_ports
 from kwikledgers_langgraph.lifecycle_state import LifecycleState
+from kwikledgers_langgraph.task_closure_policy import build_verified_task_closure_preview
 
 
 def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
@@ -24,7 +24,11 @@ def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
             raise ValueError("Story hierarchy changed before implementation")
         if snapshot.get("task_status") != "Active":
             raise ValueError("Task must be Active before implementation")
-        aware_time(ports.tracking.started_at(context["repository"], context["task_id"]))
+        start = ports.tracking.started_at(context["repository"], context["task_id"])
+        closure = build_verified_task_closure_preview(
+            {**context, "start_time": start, "close_time": ports.clock.now()})
+        if not closure["closure_allowed"]:
+            raise ValueError("; ".join(closure["validation_messages"]))
         preview = ports.tasks.plan(context)
         for field in ("plan_id", "files", "logic", "tests"):
             if not preview.get(field):
@@ -65,11 +69,14 @@ def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
         context = state["context"]
         start = ports.tracking.started_at(context["repository"], context["task_id"])
         closed_at = ports.clock.now()
-        elapsed = (aware_time(closed_at) - aware_time(start)).total_seconds()
-        if elapsed < 0:
-            raise ValueError("Closing time precedes recorded start")
+        closure = build_verified_task_closure_preview(
+            {**context, "start_time": start, "close_time": closed_at})
+        if not closure["closure_allowed"]:
+            raise ValueError("; ".join(closure["validation_messages"]))
         result = {"task_id": context["task_id"], "start_time": start,
-                  "close_time": closed_at, "completed_work_hours": ceil(elapsed / 3600)}
+                  "close_time": closed_at, "completed_work_hours": closure["completed_work_hours"],
+                  "work_kind": closure["work_kind"], "fix_summary": closure["fix_summary"],
+                  "origin_task_id": closure["origin_task_id"]}
         ports.tracking.record({"action": "task_close_time", **result},
                               key=f'{state["run_id"]}:record_close')
         return result

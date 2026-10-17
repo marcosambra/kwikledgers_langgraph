@@ -34,3 +34,26 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
     parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def build_verified_task_closure_preview(request: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    preview = build_task_closure_preview(request, now=now)
+    messages = list(preview["validation_messages"])
+    kind = request.get("work_kind") or "implementation"
+    if kind not in ("implementation", "fix"):
+        messages.append("work_kind deve ser implementation ou fix.")
+    if kind == "fix":
+        origin = request.get("origin_task_id")
+        if type(origin) is not int or origin <= 0 or origin == preview["task_id"]:
+            messages.append("Correção exige origin_task_id positivo e uma Task própria diferente da origem.")
+        if not isinstance(request.get("fix_summary"), str) or not request["fix_summary"].strip():
+            messages.append("Correção exige fix_summary descrevendo o problema corrigido.")
+    hours = request.get("completed_work_hours")
+    if hours is not None and (
+        type(hours) not in (int, float) or not math.isfinite(hours) or hours != preview["computed_hours"]
+    ):
+        messages.append("completed_work_hours deve corresponder ao ceil do intervalo registrado.")
+    return {**preview, "completed_work_hours": float(preview["computed_hours"]),
+            "work_kind": kind, "fix_summary": request.get("fix_summary"),
+            "origin_task_id": request.get("origin_task_id"),
+            "closure_allowed": not messages, "validation_messages": messages}

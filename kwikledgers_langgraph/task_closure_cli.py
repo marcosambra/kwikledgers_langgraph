@@ -177,9 +177,9 @@ def _record_runtime_observability(result: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Executa o fluxo LangGraph de preview/fechamento de task (Regra Absoluta de Fechamento de Historia). "
-            "Use o modo inicial para gerar o preview com as horas calculadas via ceil() e salvar o estado; use "
-            "'--resume-state-file' com '--approval-request-id' para confirmar o fechamento real."
+            "Gera a prévia de fechamento com horas calculadas via ceil(). A escrita nativa "
+            "exige lifecycle_cli task_cycle com início registrado, testes e commit. "
+            "Esta entrada isolada não autoriza fechamento."
         ),
     )
     parser.add_argument("--task-id", type=int, help="ID da task ou work item a ser fechado.")

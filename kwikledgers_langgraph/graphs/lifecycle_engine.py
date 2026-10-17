@@ -89,6 +89,10 @@ def build_lifecycle_graph(
             context = (context_resolver(request) if context_resolver is not None else ports.context.resolve(request))
             if not isinstance(context, dict):
                 raise ValueError("Authorized context must be a mapping")
+            if name == "task_cycle":
+                context = {**context, **{field: deepcopy(supplied[field])
+                                        for field in ("work_kind", "fix_summary", "origin_task_id")
+                                        if supplied.get(field) is not None}}
             preview_digest(context)
             for field in required_context:
                 if not context.get(field):
