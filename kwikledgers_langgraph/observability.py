@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -349,6 +350,30 @@ def append_runtime_observability_artifacts(
     }
 
 
+def workflow_completion(state: Mapping[str, Any], *, outcome: str | None = None) -> dict[str, Any]:
+    results = state.get("results", {})
+    creation = results.get("work_item_creation", results.get("debt_parent", {}))
+    snapshots = [value for key, value in results.items()
+                 if key == "confirm_snapshot" or key.endswith("_snapshot")]
+    pending = state.get("pending_approval", {})
+    execution = outcome or state.get("outcome")
+    if execution is None:
+        for key in ("pull_request_result", "task_closure_result", "story_status_result",
+                    "branch_association_result", "day_end_closure_result"):
+            if state.get(key, {}).get("status"):
+                execution = state[key]["status"]
+                break
+    approval_pending = bool(pending) and pending.get("approved") is not True
+    if execution == "running" and approval_pending:
+        execution = "waiting"
+    return {"approval": "pending" if approval_pending else "not_pending",
+            "execution": execution,
+            "work_item_persisted": bool(creation.get("id", creation.get("work_item_id"))) if creation else None,
+            "snapshot": ("confirmed" if snapshots and
+                         all(item.get("snapshot_confirmed") is True for item in snapshots) and
+                         execution != "reconciliation_required" else "not_checked")}
+
+
 def append_request_metrics(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
     from kwikledgers_fastmcp.domains.local_tracking.request_metrics import RequestMetricsService
 
@@ -386,16 +411,17 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
                      "observed_at": event.get("at", ""),
                      "measurement": "interval_since_previous_event"},
         )
-    if state.get("outcome"):
-        snapshot = state.get("results", {}).get("confirm_snapshot", {})
-        outcome = state["outcome"]
+    completion = workflow_completion(state)
+    outcome = completion["execution"]
+    if outcome:
         service.append_event(
             request_id=request_id, session_id=session_id, source="langgraph", kind="step",
             label=f"Resultado do workflow: {flow_name}",
-            status="failed" if outcome in {"reconciliation_required", "failed"} else
-                   "blocked" if outcome in {"blocked", "denied", "waiting", "running"} else "completed",
+            status="failed" if outcome in {"reconciliation_required", "failed", "execute_failed", "preview_failed"} else
+                   "blocked" if outcome in {"blocked", "denied", "waiting", "running",
+                                            "approval_required", "approved", "lifecycle_required"} else "completed",
             details={**common, "node": "workflow_result", "outcome": outcome,
-                     "reason": "snapshot_confirmed" if snapshot.get("snapshot_confirmed") is True else "snapshot_not_checked",
+                     "reason": "snapshot_confirmed" if completion["snapshot"] == "confirmed" else "snapshot_not_checked",
                      "measurement": "duration_unavailable"},
         )
     if owns_request:
@@ -406,11 +432,11 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
             duration_ms = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000
             if duration_ms < 0:
                 raise ValueError("Duração do grafo inválida.")
-        outcome = state.get("outcome")
         final_status = "failed" if state.get("errors") or outcome in {"failed", "reconciliation_required"} else "completed"
         if any(event.get("status") in {"failed", "error"} for event in timeline[-1:]):
             final_status = "failed"
-        if outcome in {"blocked", "denied", "waiting", "running"} or any(
+        if outcome in {"blocked", "denied", "waiting", "running", "approval_required",
+                       "approved", "lifecycle_required"} or any(
             event.get("status") in {"blocked", "awaiting_approval", "waiting_approval"} for event in timeline[-1:]
         ):
             final_status = "blocked"

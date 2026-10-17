@@ -64,7 +64,9 @@ aprovação explícita nem a verificação da revisão nativa.
 Saídas de lifecycle incluem `completion`, separando aprovação, estado de
 execução, item persistido e snapshot confirmado. O ledger existente recebe
 eventos `step` com `node: "workflow_result"` e outcome observado, sem payloads
-ou duração inventada. O catálogo declara pré-requisitos, ajuda pública como
+ou duração inventada. Resultados compartilhados incluem filhos de débito;
+reutilizar um resultado já persistido também emite `duplicate_prevented`.
+O catálogo declara pré-requisitos, ajuda pública como
 contrato de argumentos e critérios de conclusão; isso não valida integrações.
 
 ## Contexto Da Task

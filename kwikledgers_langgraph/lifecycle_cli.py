@@ -17,7 +17,7 @@ from kwikledgers_langgraph.lifecycle_adapters import (
 from kwikledgers_langgraph.lifecycle_runtime import (
     LIFECYCLE_BUILDERS, SignedLifecycleCheckpointer, build_lifecycle_runtime,
 )
-from kwikledgers_langgraph.observability import append_request_metrics
+from kwikledgers_langgraph.observability import append_request_metrics, workflow_completion
 
 
 def parser() -> argparse.ArgumentParser:
@@ -57,18 +57,7 @@ def lifecycle_output(result: dict[str, Any]) -> dict[str, Any]:
     outcome = result.get("outcome", "waiting")
     if outcome == "running" or (prompt is not None and outcome not in ("blocked", "denied", "reconciliation_required")):
         outcome = "waiting"
-    results = result.get("results", {})
-    creation = results.get("work_item_creation", results.get("debt_parent", {}))
-    snapshots = [value for key, value in results.items()
-                 if key == "confirm_snapshot" or key.endswith("_snapshot")]
-    completion = {
-        "approval": "pending" if result.get("pending_approval") else "not_pending",
-        "execution": outcome,
-        "work_item_persisted": bool(creation.get("id", creation.get("work_item_id"))) if creation else None,
-        "snapshot": ("confirmed" if snapshots and
-                     all(item.get("snapshot_confirmed") is True for item in snapshots) and
-                     outcome != "reconciliation_required" else "not_checked"),
-    }
+    completion = workflow_completion(result, outcome=outcome)
     return {"outcome": outcome, "outcome_reason": result.get("outcome_reason", ""),
             "completion": completion,
             "run_id": result.get("run_id"), "pending_approval": result.get("pending_approval", {}),

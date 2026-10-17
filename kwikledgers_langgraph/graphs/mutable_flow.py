@@ -244,6 +244,7 @@ def run_execute_step(
     )
     request = dict(state.get(request_key, {}))
     attempted = False
+    replayed = False
     try:
         effective_request = request_builder(request, state) if request_builder is not None else dict(request)
         effective_request.pop("execution_capability", None)
@@ -276,6 +277,7 @@ def run_execute_step(
                 pending = state["pending_approval"]
                 result = journal.once(f'mutable:{pending["run_id"]}:{pending["request_id"]}',
                                       {"action": pending["action"], "arguments": arguments}, invoke)
+                replayed = not attempted
             finally:
                 journal.close()
         else:
@@ -314,6 +316,9 @@ def run_execute_step(
         message=completed_message,
         payload=(completed_payload_builder(request, result) if completed_payload_builder is not None else {}),
     )
+    if replayed:
+        completed = record_runtime_event({**state, **completed}, node="duplicate_prevented", status="completed",
+                                         message="Durable operation result reused; duplicate write prevented.")
     return {**started, **event, **completed, result_key: result}
 
 

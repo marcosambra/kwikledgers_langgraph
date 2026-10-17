@@ -130,6 +130,7 @@ class MutableReceiptGuardrailTests(ReceiptFixture):
         second = self.execute(state, request, client)
         self.assertEqual(first["story_status_result"], second["story_status_result"])
         self.assertEqual(len(client.executions), 1)
+        self.assertEqual(second["observability"]["timeline"][-1]["node"], "duplicate_prevented")
 
     def test_unknown_write_outcome_is_not_retried_with_the_same_approval(self) -> None:
         state = self.approved_state()

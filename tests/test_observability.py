@@ -14,10 +14,28 @@ from kwikledgers_langgraph.observability import (
     build_runtime_usage_metrics_entry,
     record_runtime_event,
     resolve_ai_tracking_root,
+    workflow_completion,
 )
 
 
 class ObservabilityTestCase(unittest.TestCase):
+    def test_completion_contract_and_metrics_share_debt_and_preview_only_evidence(self) -> None:
+        debt = {"outcome": "completed", "results": {
+            "debt_parent": {"id": 10}, "debt_child_0_snapshot": {"snapshot_confirmed": True}}}
+        self.assertEqual(workflow_completion(debt)["snapshot"], "confirmed")
+        self.assertTrue(workflow_completion(debt)["work_item_persisted"])
+        self.assertEqual(workflow_completion({**debt, "outcome": "reconciliation_required"})["snapshot"],
+                         "not_checked")
+        state = {"task_closure_result": {"status": "lifecycle_required"},
+                 "observability": {"active_run_id": "run", "flow_name": "task_closure"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = append_request_metrics(state, tracking_root=directory)
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+        outcome = next(event for event in events if event.get("details", {}).get("node") == "workflow_result")
+        self.assertEqual(outcome["details"]["outcome"], "lifecycle_required")
+        self.assertEqual(outcome["status"], "blocked")
+        self.assertEqual(events[-1]["status"], "blocked")
+
     def test_resolves_native_workspace_tracking_without_legacy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tracking = Path(directory) / "AI_Tracking"
