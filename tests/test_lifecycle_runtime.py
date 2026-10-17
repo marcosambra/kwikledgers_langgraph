@@ -187,6 +187,10 @@ class OperationalLifecycleTests(TestCase):
         (self.root / "pull_request_template.md").write_text("Repository template", encoding="utf-8")
         self.client = NativeCapabilityClient()
         self.now = NOW
+        approval_clock = patch("kwikledgers_langgraph.lifecycle_cli.ExplicitLocalApproval",
+                               side_effect=lambda: ExplicitLocalApproval(clock=lambda: self.now))
+        approval_clock.start()
+        self.addCleanup(approval_clock.stop)
         self.branch_exists = False
         self.branch = "feature/KL-10-story"
         self.head = "base"

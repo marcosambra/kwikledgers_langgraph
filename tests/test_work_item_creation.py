@@ -50,6 +50,10 @@ class CreationHarness:
         self.client.call.side_effect = self.call
         self.issuer = Mock(side_effect=self.issue)
         self.approvals = ExplicitLocalApproval(APPROVAL_KEY, clock=lambda: NOW)
+        approval_clock = patch("kwikledgers_langgraph.lifecycle_cli.ExplicitLocalApproval",
+                               return_value=self.approvals)
+        approval_clock.start()
+        self.addCleanup(approval_clock.stop)
         self.gateway = LifecycleGateway(self.client, self.journal, self.issuer, Mock())
         tracking = Mock()
         tracking.record.side_effect = lambda event, key: self.journal.put(key + ":event", event)

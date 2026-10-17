@@ -413,5 +413,5 @@ print(json.dumps({"accepted": True, "source": str(source)}))
     def test_local_token_cannot_be_verified_without_the_issuance_ledger(self) -> None:
         token = self.issue_local()
         self.ledger = self.ledger.parent / "another-ledger.sqlite3"
-        self.verify(token, rejected="registro")
+        self.verify(token, rejected="segurança")
         self.assertFalse(self.ledger.exists())
