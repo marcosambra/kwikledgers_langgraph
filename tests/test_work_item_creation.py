@@ -100,6 +100,23 @@ class CreationHarness:
 
 
 class WorkItemCreationTests(CreationHarness, TestCase):
+    def test_created_task_without_browser_url_requires_reconciliation_not_recreation(self):
+        original = self.call
+
+        def without_browser_url(name, arguments):
+            result = original(name, arguments)
+            if name == "create_work_item":
+                result.pop("browser_url")
+            return result
+
+        self.client.call.side_effect = without_browser_url
+        graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
+                                             "parent_work_item_id": 10})
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "reconciliation_required")
+        self.assertEqual(result["results"][ACTION]["id"], 42)
+        self.assertEqual(len(self.effects), 1)
+
     def test_task_completion_confirms_persisted_snapshot_and_responsible(self):
         graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
                                              "parent_work_item_id": 10})

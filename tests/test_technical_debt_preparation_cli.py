@@ -39,6 +39,8 @@ class PreparationClient:
                     "duplicate_found": self.duplicate, "suggested_matches": []}
         if name == "get_my_daily_summary":
             return {"sprint_context": {"path": "KL\\2026\\Sprint 19"}}
+        if name == "get_active_user":
+            return {"email": "native@example.com"}
         if name == "append_daily_action_log":
             if self.fail_tracking:
                 raise OSError("Tracking unavailable")
@@ -62,7 +64,8 @@ class TechnicalDebtPreparationCLITests(TestCase):
                          "repositories": {"kl_store": str(self.directory)}, "iteration_paths": [ITERATION]}
         item = {"title": "Fix contract", "context": "Context <script>unsafe</script>",
                 "problem": "Problem", "impact": "Impact", "approach": "Approach",
-                "acceptance_criteria": "Regression tests pass.", "developer_suggestion": "Check regression."}
+                "acceptance_criteria": "Regression tests pass.", "developer_suggestion": "Check regression.",
+                "assigned_to": "native@example.com"}
         self.arguments = {"repository_name": "kl_store", "iteration_path": ITERATION,
                           "parent": dict(item), "children": [dict(item)]}
         self.client = PreparationClient()
@@ -92,6 +95,15 @@ class TechnicalDebtPreparationCLITests(TestCase):
         journal = LifecycleJournal(self.checkpoint, STATE_KEY.encode())
         self.addCleanup(journal.close)
         return journal
+
+    def test_child_without_responsible_uses_native_user_in_the_exact_preview(self):
+        self.arguments["children"][0].pop("assigned_to")
+        self.write_inputs()
+        code, output = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.client.calls[0], ("get_active_user", {}))
+        self.assertEqual(output["results"]["technical_debt_preview"]["children"][0]["assigned_to"],
+                         "native@example.com")
 
     def test_preparation_signs_cache_and_native_tracking_without_approval_or_azure_mutation(self):
         code, output = self.invoke()

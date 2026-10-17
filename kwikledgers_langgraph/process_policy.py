@@ -117,6 +117,9 @@ def _debt_item(item: dict[str, Any], iteration: str, *, child: bool, task_accept
               "effort_is_suggestion": "original_estimate_hours" not in item if child else "story_points" not in item}
     if not child or task_acceptance_supported:
         result["acceptance_criteria"] = acceptance
+    for field in ("assigned_to", "area_path", "tags"):
+        if field in item:
+            result[field] = _text(item, field)
     if child:
         result.update({"original_estimate_hours": _fibonacci(item.get("original_estimate_hours", 1)),
                        "parent_work_item_id": "$created_parent"})

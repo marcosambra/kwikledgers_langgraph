@@ -240,7 +240,10 @@ class OperationalLifecycleTests(TestCase):
     def runtime_issuer(self, state, *, action, capability_name, arguments):
         self.assertEqual(active_state()["run_id"], state["run_id"])
         self.assertEqual(action, "lifecycle_tracking")
-        self.assertEqual(capability_name, "append_daily_action_log")
+        self.assertIn(capability_name, ("append_daily_action_log", "sync_daily_tracking"))
+        if capability_name == "sync_daily_tracking":
+            self.assertEqual(arguments["source"], "langgraph_technical_debt")
+            self.assertTrue(json.loads(arguments["summary"])["items"])
         self.assertNotIn("verified_lifecycle_binding", state)
         return "test:tracking"
 
@@ -511,16 +514,19 @@ class OperationalLifecycleTests(TestCase):
         self.assertEqual(result["outcome"], "blocked")
         self.assertEqual(self.client.items[11]["state"], "Active")
 
-    def test_debt_items_require_separate_receipts_and_created_parent_binding(self):
+    def prepare_debt(self):
         self.journal.put("prepared", {"repository": "payment", "technical_debt_preview": {
             "repository_name": "payment", "creation_blocked": False, "exact_match": False,
             "parent": {"work_item_type": "Technical Debt", "title": "Debt", "iteration_path": "KL\\Sprint"},
-            "children": [{"work_item_type": "Task", "title": "First"},
-                         {"work_item_type": "Task", "title": "Second"}],
+            "children": [{"work_item_type": "Task", "title": "First", "assigned_to": "native@example.com"},
+                         {"work_item_type": "Task", "title": "Second", "assigned_to": "native@example.com"}],
         }})
         self.thread += ":debt"
         self.open_runtime("technical_debt_execute", preview_key="prepared")
-        result = self.start()
+        return self.start()
+
+    def test_debt_items_require_separate_receipts_and_created_parent_binding(self):
+        result = self.prepare_debt()
         self.assertEqual(result["pending_approval"]["action"], "debt_parent")
         result = self.approve(result)
         self.assertEqual(result["pending_approval"]["action"], "debt_child_0")
@@ -529,9 +535,19 @@ class OperationalLifecycleTests(TestCase):
         self.assertEqual(result["pending_approval"]["action"], "debt_child_1")
         result = self.approve(result)
         self.assertEqual(result["outcome"], "completed")
+        for index in (0, 1):
+            self.assertTrue(result["results"][f"debt_child_{index}_snapshot"]["snapshot_confirmed"])
         self.assertEqual([(action, name) for action, name, _ in self.emitted], [
             ("debt_parent", "create_work_item"), ("debt_child_0", "create_work_item"),
             ("debt_child_1", "create_work_item")])
+
+    def test_debt_snapshot_failure_preserves_created_child_without_creating_the_next(self):
+        self.client.snapshot_available = False
+        result = self.approve(self.approve(self.prepare_debt()))
+        self.assertEqual(result["outcome"], "reconciliation_required")
+        self.assertEqual(result["results"]["debt_child_0"]["id"], 102)
+        self.assertEqual(result["pending_approval"], {})
+        self.assertEqual(sum(name == "create_work_item" for name, _ in self.client.effect_calls), 2)
 
     def test_checkpoint_signature_is_verified_before_deserialization(self):
         self.start()

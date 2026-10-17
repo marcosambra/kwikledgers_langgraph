@@ -493,6 +493,17 @@ class MCPWorkItems:
         return self.gateway.execute("close", "update_work_item_effort", arguments, key)
 
 
+def native_active_user_identity(user: dict[str, Any]) -> str:
+    identity = user.get("id") or user.get("email")
+    if not identity:
+        match = re.fullmatch(r"Usuario ativo:\s*(?:[^<>]*<([^<>\s]+@[^<>\s]+)>|([^<>\s]+@[^<>\s]+))",
+                            str(user.get("message", "")))
+        identity = (match.group(1) or match.group(2)) if match else None
+    if not isinstance(identity, str) or not identity.strip():
+        raise ValueError("Authoritative active user identity required")
+    return identity
+
+
 class MCPContext:
     def __init__(self, gateway: LifecycleGateway, branches: GitBranches, *, project: str, area: str) -> None:
         self.gateway, self.branches = gateway, branches
@@ -549,12 +560,8 @@ class MCPContext:
     def resolve(self, request: dict[str, Any]) -> dict[str, Any]:
         repository = request["repository_name"]
         story, task, children = self._authorized_details(request)
-        user = self.gateway.client.call("get_active_user", {})
-        identity = user.get("id", user.get("email"))
-        if not identity:
-            match = re.fullmatch(r"Usuario ativo:\s*(?:[^<>]*<([^<>\s]+@[^<>\s]+)>|([^<>\s]+@[^<>\s]+))", str(user.get("message", "")))
-            identity = (match.group(1) or match.group(2)) if match else None
-        if not identity or not self.project or not story.get("title"):
+        identity = native_active_user_identity(self.gateway.client.call("get_active_user", {}))
+        if not self.project or not story.get("title"):
             raise ValueError("Active user/project/title required")
         return {"story_id": request["story_id"], "task_id": request["task_id"], "child_ids": children,
                 "repository": repository, "project": self.project, "area": self.area,
@@ -788,6 +795,11 @@ class MCPDebtPreparation:
             raise ValueError("Explicit operator-authorized debt iteration required")
         normalized = {field: deepcopy(normalized[field]) for field in
                       ("repository_name", "iteration_path", "parent", "children", "allow_grave") if field in normalized}
+        if any(not child.get("assigned_to") for child in normalized.get("children", [])):
+            identity = native_active_user_identity(self.gateway.client.call("get_active_user", {}))
+            for child in normalized["children"]:
+                if not child.get("assigned_to"):
+                    child["assigned_to"] = identity
         normalized["task_acceptance_supported"] = self.task_acceptance_supported
         normalized["implementation_indicated"] = True
         return normalized

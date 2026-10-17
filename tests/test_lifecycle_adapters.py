@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hmac
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -198,6 +199,9 @@ class NativeCapabilityClient:
         self.tracking_failure = False
         self.tracking_hook = None
         self.effect_calls = []
+        self.created_items = []
+        self.snapshot_available = True
+        self.task_control_data = {}
 
     def revision_guard(self, arguments):
         revisions = arguments.get("expected_revisions")
@@ -217,6 +221,14 @@ class NativeCapabilityClient:
         self.calls.append((capability_name, deepcopy(arguments)))
         if capability_name == "get_active_user":
             return deepcopy(self.user)
+        if capability_name == "get_my_daily_summary":
+            return {"items": deepcopy(self.created_items)}
+        if capability_name == "sync_daily_tracking":
+            self.effect(capability_name, arguments)
+            self.task_control_data = json.loads(arguments["summary"])
+            return {"synced": True}
+        if capability_name == "read_tracking_snapshot":
+            return {"task_control_data": deepcopy(self.task_control_data) if self.snapshot_available else {}}
         if capability_name == "get_story_details":
             return deepcopy(self.items[arguments["story_id"]])
         if capability_name == "preview_story_branch_association":
@@ -277,7 +289,11 @@ class NativeCapabilityClient:
             return {"written": True}
         if capability_name == "create_work_item":
             self.effect(capability_name, arguments)
-            return {"id": 100 + sum(name == "create_work_item" for name, _ in self.effect_calls), "revision": 1}
+            identifier = 100 + sum(name == "create_work_item" for name, _ in self.effect_calls)
+            result = {"id": identifier, "revision": 1, "assigned_to": arguments.get("assigned_to"),
+                      "browser_url": f"https://dev.azure.com/KL/_workitems/edit/{identifier}"}
+            self.created_items.append(result)
+            return deepcopy(result)
         raise AssertionError(f"Unexpected capability: {capability_name}")
 
 

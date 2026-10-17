@@ -43,7 +43,8 @@ def build_technical_debt_execution_graph(ports: LifecyclePorts, *, checkpointer:
         def prepare(state: dict[str, Any]) -> dict[str, Any]:
             item = deepcopy(prepared["parent"] if index is None else prepared["children"][index])
             fields = ("work_item_type", "title", "description", "iteration_path", "acceptance_criteria",
-                      "story_points", "original_estimate_hours", "parent_work_item_id")
+                      "story_points", "original_estimate_hours", "parent_work_item_id",
+                      "assigned_to", "area_path", "tags")
             arguments = {field: item[field] for field in fields if field in item}
             arguments["repository_name"] = repository
             if index is not None:
@@ -63,7 +64,20 @@ def build_technical_debt_execution_graph(ports: LifecyclePorts, *, checkpointer:
 
         return LifecycleStep(action, prepare, execute)
 
-    return build_lifecycle_graph(ports, (item_step(None), *(item_step(index) for index in range(len(prepared["children"])))),
+    def confirmation_step(index: int) -> LifecycleStep:
+        action = f"debt_child_{index}"
+
+        def confirm(state: dict[str, Any]) -> dict[str, Any]:
+            from kwikledgers_langgraph.work_item_creation import confirm_created_task_snapshot
+
+            return confirm_created_task_snapshot(gateway, state["results"][action],
+                key=f'{state["run_id"]}:{action}:snapshot_sync', event_source="langgraph_technical_debt")
+
+        return LifecycleStep(f"{action}_snapshot", confirm, post_execution=True)
+
+    steps = (item_step(None), *(step for index in range(len(prepared["children"]))
+                               for step in (item_step(index), confirmation_step(index))))
+    return build_lifecycle_graph(ports, steps,
                                  name="technical_debt_execute", checkpointer=checkpointer,
                                  context_resolver=resolve, required_context=("repository",))
 

@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 import math
 from typing import Any, Callable, Literal, TypedDict
 import unicodedata
+from urllib.parse import urlparse
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
@@ -335,6 +336,37 @@ class WorkItemCreationGateway(LifecycleGateway):
         return self.journal.once(key, payload, invoke)
 
 
+def confirm_created_task_snapshot(source: LifecycleGateway, created: dict[str, Any], *, key: str,
+                                 event_source: str = "langgraph_work_item_creation") -> dict[str, Any]:
+    identifier = created.get("id", created.get("work_item_id"))
+    responsible = created.get("assigned_to")
+    if not isinstance(responsible, str) or not responsible.strip() or responsible == "Nao atribuido":
+        raise CreationValidationError("Task persisted without a confirmed responsible user; reconcile, do not recreate")
+    direct_url = created.get("browser_url")
+    if not isinstance(direct_url, str) or urlparse(direct_url).scheme != "https" or not urlparse(direct_url).netloc:
+        raise CreationValidationError("Task persisted without a direct browser URL; reconcile, do not recreate")
+    summary = source.client.call("get_my_daily_summary", {})
+    source.internal("sync_daily_tracking", {
+        "summary": canonical(summary), "actions_taken": [f"Task {identifier} criada"],
+        "source": event_source,
+    }, key)
+    snapshot = source.client.call("read_tracking_snapshot", {}).get("task_control_data")
+
+    def matches(value: Any) -> bool:
+        if isinstance(value, list):
+            return any(matches(item) for item in value)
+        if not isinstance(value, dict):
+            return False
+        if value.get("id") == identifier and value.get("assigned_to") == responsible:
+            return True
+        return any(matches(item) for item in value.values() if isinstance(item, (dict, list)))
+
+    if not matches(snapshot):
+        raise CreationValidationError("Task persisted, but refreshed snapshot lacks the Task or responsible user")
+    return {"work_item_id": identifier, "assigned_to": responsible,
+            "direct_url": direct_url, "persisted": True, "snapshot_confirmed": True}
+
+
 def build_work_item_creation_graph(ports: LifecyclePorts, *, checkpointer: Any,
                                    arguments: dict[str, Any], operator: dict[str, Any],
                                    formatter: Callable[[str | None], str | None],
@@ -373,30 +405,7 @@ def build_work_item_creation_graph(ports: LifecyclePorts, *, checkpointer: Any,
         created = state["results"][ACTION]
         if kind != WorkItemKind.TASK:
             return {"required": False, "snapshot_confirmed": False}
-        identifier = created.get("id", created.get("work_item_id"))
-        responsible = created.get("assigned_to")
-        if not isinstance(responsible, str) or not responsible.strip() or responsible == "Nao atribuido":
-            raise CreationValidationError("Task persisted without a confirmed responsible user; reconcile, do not recreate")
-        summary = source.client.call("get_my_daily_summary", {})
-        source.internal("sync_daily_tracking", {
-            "summary": canonical(summary), "actions_taken": [f"Task {identifier} criada"],
-            "source": "langgraph_work_item_creation",
-        }, f'{state["run_id"]}:snapshot_sync')
-        snapshot = source.client.call("read_tracking_snapshot", {}).get("task_control_data")
-
-        def matches(value: Any) -> bool:
-            if isinstance(value, list):
-                return any(matches(item) for item in value)
-            if not isinstance(value, dict):
-                return False
-            if value.get("id") == identifier and value.get("assigned_to") == responsible:
-                return True
-            return any(matches(item) for item in value.values() if isinstance(item, (dict, list)))
-
-        if not matches(snapshot):
-            raise CreationValidationError("Task persisted, but refreshed snapshot lacks the Task or responsible user")
-        return {"work_item_id": identifier, "assigned_to": responsible,
-                "direct_url": created.get("browser_url"), "persisted": True, "snapshot_confirmed": True}
+        return confirm_created_task_snapshot(source, created, key=f'{state["run_id"]}:snapshot_sync')
 
     return build_lifecycle_graph(ports, (LifecycleStep(ACTION, prepare, execute),
                                        LifecycleStep("confirm_snapshot", confirm_snapshot, post_execution=True)), name=ACTION,

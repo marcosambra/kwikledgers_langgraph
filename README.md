@@ -43,6 +43,11 @@ snapshot persistido para confirmar ID e responsável. Escrita concluída não é
 confirmação do snapshot: falha nessa etapa retorna `reconciliation_required`,
 preserva o resultado da criação e não cria o item novamente. Isso comprova o
 snapshot, não que uma janela da extensão esteja aberta ou já tenha renderizado.
+Cada Task filha criada no lifecycle de débito usa a mesma confirmação antes
+de oferecer a próxima criação. Responsável explícito integra a prévia; quando
+omitido na preparação, a identidade vem da leitura nativa do usuário ativo.
+Falha de URL, responsável, sync ou snapshot mantém o item criado e exige
+reconciliação, sem recriar o filho nem continuar silenciosamente.
 
 Na preparação de débito, `target_iteration: "next_sprint"` lê a sprint atual
 pelo resumo nativo, exige o ano corrente e seleciona a próxima sprint principal
