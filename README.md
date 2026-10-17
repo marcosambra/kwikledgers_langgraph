@@ -1,15 +1,5 @@
 # KwikLedgers LangGraph Runtime
 
-Repositório Python do runtime futuro de orquestração da KwikLedgers em
-LangGraph.
-
-Objetivos deste primeiro slice:
-- manter o agente anterior intocado
-- abrir um seam tecnico para migracao incremental dos fluxos
-- definir estado tipado e portas de integracao independentes do MCP atual
-- compilar o primeiro subgrafo de `Daily Summary`
-
-e notificacoes sejam plugados sem editar o runtime anterior.
 Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
 aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
 O `fastmcp` é o único backend suportado; o backend `legacy` foi removido.
@@ -29,12 +19,33 @@ testes e commit locais contínuos. Não há confirmações redundantes para esse
 passos. O runtime ainda exige contexto/hierarquia válidos, início de história
 concluído, plano inalterado, testes aprovados e a mesma árvore testada antes
 do commit. Horas e fechamento mantêm suas prévias e aprovações independentes.
+As CLIs menores também persistem resultado e reserva por run/request antes
+da escrita. Repetir uma aprovação concluída reutiliza seu resultado; uma
+tentativa de resultado desconhecido exige reconciliação, sem retry automático.
 
 Após criar uma Task, o lifecycle sincroniza o resumo nativo e consulta o
 snapshot persistido para confirmar ID e responsável. Escrita concluída não é
 confirmação do snapshot: falha nessa etapa retorna `reconciliation_required`,
 preserva o resultado da criação e não cria o item novamente. Isso comprova o
 snapshot, não que uma janela da extensão esteja aberta ou já tenha renderizado.
+
+Na preparação de débito, `target_iteration: "next_sprint"` lê a sprint atual
+pelo resumo nativo, exige o ano corrente e seleciona a próxima sprint principal
+na lista autorizada do operador. Variante de suporte não substitui a principal.
+Similaridade e prévia completa são salvas também em
+`AI_Tracking/Repo_Work_Item_Context/{technical_debts,technical_debt_previews}/<repo>.json`,
+além da evidência do journal. Estados e caches são substituídos atomicamente.
+
+Transições de status continuam sequenciais por padrão. Uma exceção solicitada
+pelo usuário usa `--transition-exception-reason` com
+`--expected-current-status`; a justificativa integra a prévia e não elimina a
+aprovação explícita nem a verificação da revisão nativa.
+
+Saídas de lifecycle incluem `completion`, separando aprovação, estado de
+execução, item persistido e snapshot confirmado. O ledger existente recebe
+eventos `step` com `node: "workflow_result"` e outcome observado, sem payloads
+ou duração inventada. O catálogo declara pré-requisitos, ajuda pública como
+contrato de argumentos e critérios de conclusão; isso não valida integrações.
 
 ## Contexto Da Task
 

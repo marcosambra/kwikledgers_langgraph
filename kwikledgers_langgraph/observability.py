@@ -386,6 +386,18 @@ def append_request_metrics(state: AgentState, *, tracking_root: str | Path | Non
                      "observed_at": event.get("at", ""),
                      "measurement": "interval_since_previous_event"},
         )
+    if state.get("outcome"):
+        snapshot = state.get("results", {}).get("confirm_snapshot", {})
+        outcome = state["outcome"]
+        service.append_event(
+            request_id=request_id, session_id=session_id, source="langgraph", kind="step",
+            label=f"Resultado do workflow: {flow_name}",
+            status="failed" if outcome in {"reconciliation_required", "failed"} else
+                   "blocked" if outcome in {"blocked", "denied", "waiting", "running"} else "completed",
+            details={**common, "node": "workflow_result", "outcome": outcome,
+                     "reason": "snapshot_confirmed" if snapshot.get("snapshot_confirmed") is True else "snapshot_not_checked",
+                     "measurement": "duration_unavailable"},
+        )
     if owns_request:
         duration_ms = None
         start = context.get("started_at")

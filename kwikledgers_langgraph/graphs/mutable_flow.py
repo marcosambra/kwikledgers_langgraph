@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
 from kwikledgers_langgraph.fastmcp_adapters import technical_arguments_for_capability
-from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
+from kwikledgers_langgraph.fastmcp_execution_capability import (
+    DEFAULT_EXECUTION_CAPABILITY_LEDGER, EXECUTION_CAPABILITY_LEDGER_ENV_VAR, issue_execution_capability,
+)
+from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal
 from kwikledgers_langgraph.guardrails import (
     ApprovalRequiredError,
     OperationKind,
@@ -230,6 +235,7 @@ def run_execute_step(
         message=started_message,
     )
     request = dict(state.get(request_key, {}))
+    attempted = False
     try:
         effective_request = request_builder(request, state) if request_builder is not None else dict(request)
         effective_request.pop("execution_capability", None)
@@ -246,13 +252,26 @@ def run_execute_step(
                 approved_arguments, sort_keys=True, allow_nan=False,
             ):
                 raise ApprovalRequiredError("Execution payload does not match the approved preview.")
-            effective_request["execution_capability"] = issue_execution_capability(
-                state,
-                action=approval_action or node,
-                capability_name=fastmcp_capability_name,
-                arguments=arguments,
-            )
-        result = execute_operation(effective_request)
+            def invoke() -> dict[str, Any]:
+                nonlocal attempted
+                effective_request["execution_capability"] = issue_execution_capability(
+                    state, action=approval_action or node,
+                    capability_name=fastmcp_capability_name, arguments=arguments,
+                )
+                attempted = True
+                return execute_operation(effective_request)
+
+            ledger = Path(os.environ.get(EXECUTION_CAPABILITY_LEDGER_ENV_VAR,
+                                         str(DEFAULT_EXECUTION_CAPABILITY_LEDGER)))
+            journal = LifecycleJournal(ledger.with_name("mutable-operations.sqlite3"))
+            try:
+                pending = state["pending_approval"]
+                result = journal.once(f'mutable:{pending["run_id"]}:{pending["request_id"]}',
+                                      {"action": pending["action"], "arguments": arguments}, invoke)
+            finally:
+                journal.close()
+        else:
+            result = execute_operation(effective_request)
     except Exception as error:
         error_updates = append_error(state, f"{failed_message}: {error}")
         failed = record_runtime_event(
@@ -262,11 +281,16 @@ def run_execute_step(
             message=failed_message,
             payload={"error": str(error)},
         )
+        unknown = attempted or str(error) in (
+            "Execution outcome unknown; reconcile before retry",
+            "Execution already reserved; reconcile before retry",
+        )
         return {
             **started,
             **error_updates,
             **failed,
-            result_key: {"status": "execute_failed", "changed": False},
+            result_key: {"status": "reconciliation_required" if unknown else "execute_failed",
+                         "changed": None if unknown else False},
         }
 
     event = append_tracking_event(

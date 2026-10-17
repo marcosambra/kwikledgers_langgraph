@@ -122,6 +122,26 @@ class ReceiptFixture(unittest.TestCase):
 
 
 class MutableReceiptGuardrailTests(ReceiptFixture):
+    def test_repeated_approved_request_reuses_durable_result_without_second_write(self) -> None:
+        state = self.approved_state()
+        request = {"story_id": 42, "target_status": "Aguardando PR", "preview": {"story_revision": 7}}
+        client = VerifyingClient()
+        first = self.execute(state, request, client)
+        second = self.execute(state, request, client)
+        self.assertEqual(first["story_status_result"], second["story_status_result"])
+        self.assertEqual(len(client.executions), 1)
+
+    def test_unknown_write_outcome_is_not_retried_with_the_same_approval(self) -> None:
+        state = self.approved_state()
+        request = {"story_id": 42, "target_status": "Aguardando PR", "preview": {"story_revision": 7}}
+        client = VerifyingClient()
+        with patch.object(client, "call", side_effect=TimeoutError("Unknown outcome")) as call:
+            for _ in range(2):
+                result = self.execute(state, request, client)
+                self.assertEqual(result["story_status_result"]["status"], "reconciliation_required")
+                self.assertIsNone(result["story_status_result"]["changed"])
+            call.assert_called_once()
+
     def test_explicit_confirmation_without_key_is_bound_to_exact_preview(self) -> None:
         with patch.dict(os.environ, {"KWIKLEDGERS_LIFECYCLE_APPROVAL_KEY": ""}):
             state = self.state()

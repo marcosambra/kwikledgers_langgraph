@@ -108,6 +108,18 @@ class ObservabilityTestCase(unittest.TestCase):
             records = [json.loads(line) for line in path.read_text().splitlines()]
         self.assertEqual(records[-1]["status"], "blocked")
 
+    def test_workflow_result_preserves_snapshot_evidence_without_inventing_duration(self) -> None:
+        state = {"outcome": "completed",
+                 "results": {"confirm_snapshot": {"snapshot_confirmed": True}},
+                 "observability": {"active_run_id": "observed-run", "flow_name": "work_item_creation"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = append_request_metrics(state, tracking_root=directory)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+        event = next(row for row in records if row.get("details", {}).get("node") == "workflow_result")
+        self.assertEqual(event["details"]["outcome"], "completed")
+        self.assertEqual(event["details"]["reason"], "snapshot_confirmed")
+        self.assertIsNone(event.get("duration_ms"))
+
     def test_build_runtime_usage_metrics_entry_uses_minimal_operational_fields(self) -> None:
         state = {
             "source": "test",

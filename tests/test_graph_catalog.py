@@ -57,6 +57,8 @@ class GraphCatalogTests(TestCase):
         self.assertEqual(snapshot["entry_status"], "not_exposed")
         for flow in flows.values():
             self.assertEqual(flow["runtime_status"], "not_checked")
+            self.assertTrue(flow["prerequisites"])
+            self.assertTrue(flow["completion_criteria"])
             entry = flow["entry_point"]
             if entry is not None:
                 self.assertEqual(entry[:2], ["python", "-m"])
@@ -66,6 +68,7 @@ class GraphCatalogTests(TestCase):
         self.assertEqual(flows["task_closure"]["resume_option"], "--resume-state-file")
         self.assertEqual(flows["story_start"]["resume_option"], "--resume")
         self.assertEqual(flows["day_end_closure"]["approval"], "runtime_policy")
+        self.assertIn("task_snapshot_and_responsible_confirmed", flows["work_item_creation"]["completion_criteria"])
 
     def test_atomic_argument_fields_and_lifecycle_restrictions_come_from_existing_schemas(self):
         from kwikledgers_langgraph.atomic_runtime import (

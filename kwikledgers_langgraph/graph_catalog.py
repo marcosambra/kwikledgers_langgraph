@@ -70,6 +70,14 @@ def _operational_metadata(specification: GraphSpecification) -> dict[str, Any]:
         "approval": specification.approval,
         "resume_option": resume_option,
         "approval_option": "--approval-request-id" if resume_option else None,
+        "prerequisites": ["python_environment"] +
+                         (["native_fastmcp", "azure_context"] if "azure_read" in specification.effects else []) +
+                         (["operator_config", "trusted_checkpoint"] if module == "lifecycle_cli" else []),
+        "input_contract": ({"source": "help_command", "format": "cli_arguments"} if entry is not None else None),
+        "completion_criteria": (
+            ["preview_inspected", "explicit_approval", "execution_confirmed", "durable_evidence"]
+            if specification.approval == "explicit_after_preview" else ["successful_read_or_preview"]
+        ),
     }
 
 
@@ -117,21 +125,18 @@ def operational_catalog() -> dict[str, Any]:
     known = {flow["id"] for flow in flows}
     for name in LIFECYCLE_BUILDERS:
         if name not in known:
-            flows.append({
-                "id": name, "entry_point": _entry_point("lifecycle_cli", name),
-                "help_command": _entry_point("lifecycle_cli", "--help"),
-                "entry_status": "declared", "runtime_status": "not_checked",
-                "effects": ["azure_read", "azure_write", "local_tracking_write"],
-                "approval": "explicit_after_preview", "resume_option": "--resume",
-                "approval_option": "--approval-request-id",
-            })
+            flows.append(_operational_metadata(GraphSpecification(
+                name, adapters.LifecyclePorts, "lifecycle_cli",
+                ("azure_read", "azure_write", "local_tracking_write"), "explicit_after_preview")))
     flows.append({
-        "id": ACTION, "entry_point": _entry_point("work_item_creation_cli"),
-        "help_command": _entry_point("work_item_creation_cli", "--help"),
-        "entry_status": "declared", "runtime_status": "not_checked",
-        "effects": ["azure_read", "azure_write", "local_tracking_write"],
-        "approval": "explicit_after_preview", "resume_option": "--resume",
-        "approval_option": "--approval-request-id",
+        **_operational_metadata(GraphSpecification(
+            ACTION, adapters.LifecyclePorts, "work_item_creation_cli",
+            ("azure_read", "azure_write", "local_tracking_write"), "explicit_after_preview")),
+        "resume_option": "--resume",
+        "prerequisites": ["python_environment", "native_fastmcp", "azure_context",
+                          "operator_config", "process_constraints", "trusted_checkpoint"],
+        "completion_criteria": ["explicit_approval", "work_item_persisted",
+                                "task_snapshot_and_responsible_confirmed"],
         "argument_fields": sorted(NATIVE_FIELDS),
     })
     capabilities = []
