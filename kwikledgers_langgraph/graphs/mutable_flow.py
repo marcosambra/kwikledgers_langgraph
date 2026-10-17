@@ -11,7 +11,7 @@ from kwikledgers_langgraph.guardrails import (
     OperationKind,
     allow_without_approval,
     evaluate_operation,
-    require_signed_execution_approval,
+    require_execution_approval,
 )
 from kwikledgers_langgraph.observability import record_runtime_event
 from kwikledgers_langgraph.state import AgentState, append_error, append_tracking_event
@@ -234,7 +234,7 @@ def run_execute_step(
         effective_request = request_builder(request, state) if request_builder is not None else dict(request)
         effective_request.pop("execution_capability", None)
         if fastmcp_capability_name:
-            require_signed_execution_approval(state, action=approval_action or node)
+            require_execution_approval(state, action=approval_action or node)
             approved_preview = dict(state["pending_approval"]["preview"])
             arguments = technical_arguments_for_capability(fastmcp_capability_name, effective_request)
             approved_arguments = approved_preview.get("execution_arguments")

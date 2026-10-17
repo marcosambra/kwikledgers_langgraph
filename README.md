@@ -14,6 +14,12 @@ Este repositório orquestra o runtime ativo: LangGraph é dono de processo,
 aprovação e replay, enquanto FastMCP fornece as capabilities atômicas nativas.
 O `fastmcp` é o único backend suportado; o backend `legacy` foi removido.
 
+A aprovação local usa prévia separada e retomada explícita com
+`--approval-request-id`, tanto nos lifecycles quanto nas CLIs de PR, branch,
+status e fechamento. Os guardrails e o emissor de capabilities verificam a
+mesma confirmação vinculada à ação, prévia, run e request antes da escrita.
+Recibos externos não são aceitos; estados antigos com recibo exigem nova prévia.
+
 ## Contexto Da Task
 
 ### Handoff da extensão para o Copilot
