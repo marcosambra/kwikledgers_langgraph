@@ -37,6 +37,8 @@ class PreparationClient:
                 raise OSError("Similarity unavailable")
             return {"repository_name": arguments["repository_name"], "query_title": arguments["title"],
                     "duplicate_found": self.duplicate, "suggested_matches": []}
+        if name == "get_my_daily_summary":
+            return {"sprint_context": {"path": "KL\\2026\\Sprint 19"}}
         if name == "append_daily_action_log":
             if self.fail_tracking:
                 raise OSError("Tracking unavailable")
@@ -51,6 +53,8 @@ class TechnicalDebtPreparationCLITests(TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
+        self.tracking_root = self.directory / "AI_Tracking"
+        self.tracking_root.mkdir()
         self.checkpoint = self.directory / "journal.db"
         self.operator_path = self.directory / "operator.json"
         self.arguments_path = self.directory / "arguments.json"
@@ -65,6 +69,7 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.issuer = Mock(wraps=issue_runtime_execution_capability)
         self.addCleanup(patch.stopall)
         patch.dict("os.environ", {"KWIKLEDGERS_LIFECYCLE_STATE_KEY": STATE_KEY,
+                                  "KWIKLEDGERS_AI_TRACKING_ROOT": str(self.tracking_root),
                                   "KWIKLEDGERS_FASTMCP_CAPABILITY_LEDGER": str(self.directory / "capabilities.sqlite3"),
                                   "KWIKLEDGERS_FASTMCP_EXECUTION_KEY": RUNTIME_KEY}, clear=True).start()
         patch("kwikledgers_langgraph.lifecycle_adapters.FastMCPClient", return_value=self.client).start()
@@ -107,7 +112,10 @@ class TechnicalDebtPreparationCLITests(TestCase):
         self.assertEqual(cached["repository"], "kl_store")
         self.assertEqual(cached["technical_debt_preview"],
                          {field: value for field, value in preview.items() if field != "preview_cache_path"})
-        self.assertEqual(preview["preview_cache_path"], f'{self.checkpoint}#{output["preview_key"]}')
+        self.assertEqual(preview["preview_cache_path"],
+                         str(self.tracking_root / "Repo_Work_Item_Context/technical_debt_previews/kl_store.json"))
+        self.assertEqual(json.loads(Path(preview["preview_cache_path"]).read_text(encoding="utf-8")),
+                         cached["technical_debt_preview"])
         self.assertEqual(journal.get(f'{output["run_id"]}:similarity')["repository"], "kl_store")
         self.assertEqual(journal.get(f'{output["run_id"]}:prepared:event')["run_id"], output["run_id"])
         issued = self.issuer.call_args
@@ -182,13 +190,30 @@ class TechnicalDebtPreparationCLITests(TestCase):
 
     def test_preparation_without_configured_keys_uses_the_runtime_issuer_contract(self):
         self.issuer.side_effect = lambda *args, **kwargs: "local-runtime-capability"
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", {"KWIKLEDGERS_AI_TRACKING_ROOT": str(self.tracking_root)}, clear=True):
             code, output = self.invoke()
         self.assertEqual((code, output["outcome"]), (0, "preview_only"))
         journal = LifecycleJournal(self.checkpoint)
         self.addCleanup(journal.close)
         self.assertEqual(journal.get(output["preview_key"])["repository"], "kl_store")
         self.issuer.assert_called_once()
+
+    def test_next_sprint_uses_native_context_and_requires_authorized_main_sprint(self):
+        self.arguments.pop("iteration_path")
+        self.arguments["target_iteration"] = "next_sprint"
+        self.write_inputs()
+        with patch("kwikledgers_langgraph.lifecycle_adapters.UTCClock.now",
+                   return_value="2026-10-17T12:00:00+00:00"):
+            code, output = self.invoke()
+        self.assertEqual((code, output["outcome"]), (0, "preview_only"))
+        self.assertEqual(output["results"]["technical_debt_preview"]["parent"]["iteration_path"], ITERATION)
+        self.assertEqual(self.client.calls[0], ("get_my_daily_summary", {}))
+        self.operator["iteration_paths"] = [ITERATION + "\\Sustentacao"]
+        self.write_inputs()
+        with patch("kwikledgers_langgraph.lifecycle_adapters.UTCClock.now",
+                   return_value="2026-10-17T12:00:00+00:00"):
+            code, output = self.invoke()
+        self.assertEqual((code, output["outcome"]), (1, "blocked"))
 
     def test_unauthorized_repository_iteration_and_next_sprint_fail_before_native_reads(self):
         for changes in ({"repository_name": "other"}, {"iteration_path": "Other"},

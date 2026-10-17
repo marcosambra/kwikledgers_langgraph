@@ -17,6 +17,16 @@ from kwikledgers_langgraph.state_persistence import (
 
 
 class StatePersistenceTestCase(unittest.TestCase):
+    def test_failed_atomic_write_preserves_previous_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            write_state_file({"value": "before"}, str(path))
+            with self.assertRaises(ValueError):
+                write_state_file({"value": float("nan")}, str(path))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"value": "before"})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
     def test_public_inspection_checks_the_pending_binding_without_execution(self) -> None:
         from kwikledgers_langgraph.guardrails import build_bound_approval
 

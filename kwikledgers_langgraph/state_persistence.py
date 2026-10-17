@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import argparse
 from hashlib import sha256
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -60,9 +62,19 @@ def load_state_file(state_file_path: str) -> AgentState:
 def write_state_file(state: dict[str, Any], state_file_path: str) -> None:
     output_path = Path(state_file_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as state_file:
-        json.dump(state, state_file, indent=2, ensure_ascii=False, allow_nan=False)
-        state_file.write("\n")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output_path.parent,
+                                         delete=False) as state_file:
+            temporary = Path(state_file.name)
+            json.dump(state, state_file, indent=2, ensure_ascii=False, allow_nan=False)
+            state_file.write("\n")
+            state_file.flush()
+            os.fsync(state_file.fileno())
+        os.replace(temporary, output_path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def inspect_approval(state_file_path: str) -> dict[str, Any]:

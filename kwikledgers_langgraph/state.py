@@ -54,6 +54,7 @@ class StoryStatusTransitionRequest(TypedDict, total=False):
     story_id: int
     target_status: str
     expected_current_status: str
+    transition_exception_reason: str
 
 
 class TaskClosureRequest(TypedDict, total=False):

@@ -24,6 +24,10 @@ def build_story_status_transition_preview(
     current_index = _find_status_index(current_status)
     target_index = _find_status_index(target_status)
     validation_messages: list[str] = []
+    exception_reason = request.get("transition_exception_reason")
+    explicit_exception = isinstance(exception_reason, str) and bool(exception_reason.strip())
+    if exception_reason is not None and (not explicit_exception or not expected_current_status):
+        validation_messages.append("Exceção exige justificativa explícita e status atual esperado.")
 
     if snapshot.get("work_item_type") and snapshot.get("work_item_type") != "User Story":
         validation_messages.append("O item informado nao e uma User Story.")
@@ -33,13 +37,15 @@ def build_story_status_transition_preview(
         validation_messages.append("O status atual da story nao faz parte do fluxo canonico esperado.")
     if target_index is None:
         validation_messages.append("O status de destino nao faz parte do fluxo canonico esperado.")
-    if current_index is not None and target_index is not None and target_index != current_index + 1:
+    if (current_index is not None and target_index is not None and target_index != current_index + 1
+            and not explicit_exception):
         validation_messages.append("A transicao solicitada nao e a proxima etapa permitida no fluxo canonico.")
 
     return {
         **snapshot,
         "target_status": target_status,
         "expected_current_status": expected_current_status,
+        "transition_exception_reason": exception_reason,
         "transition_allowed": not validation_messages,
         "validation_messages": validation_messages,
         "canonical_flow": list(CANONICAL_STORY_STATUS_FLOW),

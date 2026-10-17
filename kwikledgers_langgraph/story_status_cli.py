@@ -34,6 +34,8 @@ def _build_request(arguments: argparse.Namespace) -> StoryStatusTransitionReques
     }
     if arguments.expected_current_status:
         request["expected_current_status"] = arguments.expected_current_status
+    if getattr(arguments, "transition_exception_reason", None) is not None:
+        request["transition_exception_reason"] = arguments.transition_exception_reason
     return request
 
 
@@ -172,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--story-id", type=int, help="ID da story pai.")
     parser.add_argument("--target-status", help="Status de destino da story.")
+    parser.add_argument("--transition-exception-reason", default=None,
+                        help="Justificativa de exceção solicitada pelo usuário; exige status atual esperado e aprovação da prévia.")
     parser.add_argument(
         "--expected-current-status",
         default=None,

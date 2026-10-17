@@ -773,12 +773,21 @@ class MCPDebtPreparation:
     def resolve(self, request: dict[str, Any]) -> dict[str, Any]:
         if request.get("repository_name") not in self.repositories:
             raise ValueError("Debt repository not authorized by operator")
+        normalized = deepcopy(request)
         if request.get("target_iteration") == "next_sprint":
-            raise RuntimeError("MAIN must supply an authoritative next-sprint resolver")
-        if request.get("iteration_path") not in self.iterations:
+            if request.get("iteration_path"):
+                raise ValueError("Choose explicit iteration or next_sprint, not both")
+            summary = self.gateway.client.call("get_my_daily_summary", {})
+            path = summary.get("sprint_context", {}).get("path")
+            match = re.fullmatch(r"(.+)\\(\d{4})\\Sprint (\d+)", path or "")
+            year = datetime.fromisoformat(UTCClock().now()).year
+            if match is None or int(match[2]) != year or int(match[3]) < 1:
+                raise ValueError("Authoritative current-year main sprint required")
+            normalized["iteration_path"] = f"{match[1]}\\{year}\\Sprint {int(match[3]) + 1}"
+        if normalized.get("iteration_path") not in self.iterations:
             raise ValueError("Explicit operator-authorized debt iteration required")
-        normalized = {field: deepcopy(request[field]) for field in
-                      ("repository_name", "iteration_path", "parent", "children", "allow_grave") if field in request}
+        normalized = {field: deepcopy(normalized[field]) for field in
+                      ("repository_name", "iteration_path", "parent", "children", "allow_grave") if field in normalized}
         normalized["task_acceptance_supported"] = self.task_acceptance_supported
         normalized["implementation_indicated"] = True
         return normalized
@@ -795,11 +804,21 @@ class MCPDebtPreparation:
 
     def save_repository_context(self, repository: str, similarity: dict[str, Any], *, key: str) -> str:
         self.gateway.journal.put(key, {"repository": repository, "similarity": similarity})
-        return f"{self.gateway.journal.path}#{key}"
+        return self._artifact(repository, similarity, "technical_debts")
 
     def save_preview_cache(self, repository: str, preview: dict[str, Any], *, key: str) -> str:
         self.gateway.journal.put(key, {"repository": repository, "technical_debt_preview": preview})
-        return f"{self.gateway.journal.path}#{key}"
+        return self._artifact(repository, preview, "technical_debt_previews")
+
+    def _artifact(self, repository: str, payload: dict[str, Any], directory: str) -> str:
+        from kwikledgers_langgraph.observability import resolve_ai_tracking_root
+        from kwikledgers_langgraph.state_persistence import write_state_file
+
+        if repository not in self.repositories or re.fullmatch(r"[a-z][a-z0-9_]*", repository) is None:
+            raise ValueError("Invalid repository artifact name")
+        path = resolve_ai_tracking_root() / "Repo_Work_Item_Context" / directory / f"{repository}.json"
+        write_state_file(payload, str(path))
+        return str(path)
 
 
 def build_debt_preparation_ports(*, repositories: Mapping[str, Path], iteration_paths: tuple[str, ...],
