@@ -121,6 +121,26 @@ ou evidência preparada e não recebem uma topologia fictícia neste catálogo.
 O catálogo não expõe estados, recibos ou payloads operacionais. É uma superfície
 de inspeção, não substitui os eventos e traces do runtime no observatório.
 
+### Descoberta de entradas públicas
+
+`python -m kwikledgers_langgraph.graph_catalog --operational` retorna um
+catálogo JSON versão `1`, separado da lista de topologias consumida pela
+extensão. Ele lista os módulos CLI declarados, comandos de ajuda, efeitos
+possíveis, modalidade de aprovação e opção de retomada. Os campos de argumentos
+atômicos vêm dos schemas existentes; não substituem as validações dos workflows
+nem as restrições do processo Azure.
+
+Grafos sem entrada pública, como `process_snapshot`, têm `entry_point: null`
+e `entry_status: "not_exposed"`. Entradas declaradas permanecem com
+`runtime_status: "not_checked"`: descoberta não testa credenciais, transporte,
+aprovações, disponibilidade externa ou execução real. `integration_checks`
+permanece `"not_performed"`, e nenhuma integração ou workflow é executado.
+
+As capacidades reservadas a lifecycle aparecem separadamente, com execução
+atômica direta desabilitada. O catálogo não encaminha operações, concede
+aprovação nem habilita capacidades ausentes. A invocação sem argumentos mantém
+o formato anterior das 12 topologias.
+
 ## Modo de repositorio standalone
 
 O projeto foi estruturado para viver como um repositório próprio no GitHub.
