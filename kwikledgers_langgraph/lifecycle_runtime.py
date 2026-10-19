@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
 from kwikledgers_langgraph.graphs.story_lifecycle import build_story_completion_graph, build_story_start_graph
-from kwikledgers_langgraph.graphs.task_lifecycle import build_task_cycle_graph
+from kwikledgers_langgraph.graphs.task_lifecycle import build_task_cycle_graph, build_task_hours_graph
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
 from kwikledgers_langgraph.lifecycle_adapters import LifecycleJournal, canonical
 
@@ -172,6 +172,7 @@ LIFECYCLE_BUILDERS: dict[str, Callable[..., Any]] = {
     "story_start": build_story_start_graph,
     "story_completion": build_story_completion_graph,
     "task_cycle": build_task_cycle_graph,
+    "task_hours": build_task_hours_graph,
     "technical_debt_execute": build_technical_debt_execution_graph,
 }
 

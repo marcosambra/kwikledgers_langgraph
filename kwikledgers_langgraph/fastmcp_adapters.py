@@ -51,7 +51,10 @@ def technical_arguments_for_capability(capability_name: str, request: dict[str, 
         }
     elif capability_name == "update_work_item_effort":
         preview = request.get("preview", {})
-        if not isinstance(preview, dict) or preview.get("closure_allowed") is not True:
+        if not isinstance(preview, dict):
+            raise ValueError("Task effort requires a structured approved preview.")
+        hours_only = preview.get("hours_only") is True
+        if not hours_only and preview.get("closure_allowed") is not True:
             raise ValueError("Task closure requires an allowed approved preview.")
         task_id = int(request["task_id"])
         if preview.get("task_id", task_id) != task_id:
@@ -62,9 +65,10 @@ def technical_arguments_for_capability(capability_name: str, request: dict[str, 
         arguments: dict[str, Any] = {
             "work_item_id": task_id,
             "completed_work_hours": hours,
-            "status": "Closed",
             "expected_revision": _revision(request, "task_revision", "expected_revision", "revision"),
         }
+        if not hours_only:
+            arguments["status"] = "Closed"
         for field in ("remaining_work_hours", "comment"):
             if preview.get(field) is not None:
                 arguments[field] = preview[field]
@@ -307,4 +311,13 @@ class FastMCPTaskClosureAdapter(_FastMCPAdapter):
         return {"task_id": task_id, "task_revision": revision, "execution_requires_lifecycle": "task_cycle"}
 
     def close_task(self, request: dict[str, Any]) -> dict[str, Any]:
-        raise RuntimeError("Task closure requires lifecycle task_cycle with registered start/test/commit evidence.")
+        preview = request.get("preview", {})
+        try:
+            arguments = technical_arguments_for_capability(
+                "update_work_item_effort", {**request, "preview": preview},
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "Task closure requires an allowed approved preview."
+            ) from error
+        return self._execute("update_work_item_effort", arguments, None)

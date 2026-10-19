@@ -135,12 +135,12 @@ def validate_lifecycle_execution(state: dict[str, Any], *, action: str,
             name = "create_work_item"
             expected = preview
         elif action.startswith("atomic_"):
-            from kwikledgers_langgraph.atomic_runtime import ATOMIC_ACTION_CAPABILITIES, validate_arguments
+            from kwikledgers_langgraph.atomic_runtime import ATOMIC_ACTION_CAPABILITIES, atomic_preview_arguments
 
             name = ATOMIC_ACTION_CAPABILITIES.get(action)
             if name is None:
                 raise ValueError("Lifecycle action has no authorized FastMCP capability")
-            expected = validate_arguments(name, preview, technical=True)
+            expected = atomic_preview_arguments(name, preview)
         else:
             raise ValueError("Lifecycle action has no authorized FastMCP capability")
         if capability_name != name or canonical(arguments) != canonical(expected):

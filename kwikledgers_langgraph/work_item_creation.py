@@ -274,7 +274,7 @@ def prepare_creation(arguments: dict[str, Any], operator: dict[str, Any],
     return validate_native_arguments(complete), kind
 
 
-def _parent(client: Any, identifier: int, operator: dict[str, Any]) -> dict[str, Any]:
+def _parent(client: Any, identifier: int, operator: dict[str, Any], child_kind: str) -> dict[str, Any]:
     details = client.call("get_story_details", {"story_id": identifier})
     if not isinstance(details, dict):
         raise CreationValidationError("Structured parent details required")
@@ -293,8 +293,11 @@ def _parent(client: Any, identifier: int, operator: dict[str, Any]) -> dict[str,
         raise CreationValidationError("Authoritative parent identity and positive native revision required")
     if project != operator["project"]:
         raise CreationValidationError("Parent project differs from operator project")
-    if kind != operator["process_constraints"][WorkItemKind.USER_STORY.value]["native_type"]:
-        raise CreationValidationError("Parent must be an authorized native UserStory, not technical debt")
+    allowed_types = {operator["process_constraints"][WorkItemKind.USER_STORY.value]["native_type"]}
+    if child_kind == WorkItemKind.TASK.value:
+        allowed_types.add(operator["process_constraints"][WorkItemKind.BUG.value]["native_type"])
+    if kind not in allowed_types:
+        raise CreationValidationError("Parent must be an authorized native UserStory or, for Tasks, Bug")
     return {"id": identity, "revision": revision, "work_item_type": kind, "project": project,
             "area_path": area, "iteration_path": iteration}
 
@@ -319,7 +322,7 @@ class WorkItemCreationGateway(LifecycleGateway):
 
         def invoke() -> dict[str, Any]:
             parent = context.get("creation_parent")
-            if parent and _parent(self.client, parent["id"], context["creation_operator"]) != parent:
+            if parent and _parent(self.client, parent["id"], context["creation_operator"], kind) != parent:
                 raise CreationValidationError("Parent changed; obtain a new preview and signed receipt")
             trusted = active_state(ACTION)
             token = self.execution_issuer(trusted, action=ACTION, capability_name=CAPABILITY,
@@ -383,7 +386,7 @@ def build_work_item_creation_graph(ports: LifecyclePorts, *, checkpointer: Any,
         if ports.branches is None:
             raise CreationValidationError("Authorized repository port required")
         ports.branches.path(payload["repository_name"])
-        parent = (_parent(source.client, payload["parent_work_item_id"], policy)
+        parent = (_parent(source.client, payload["parent_work_item_id"], policy, kind.value)
                   if payload.get("parent_work_item_id") else None)
         return {"repository": payload["repository_name"], "creation_kind": kind.value,
                 "creation_arguments": deepcopy(supplied), "creation_payload": deepcopy(payload),

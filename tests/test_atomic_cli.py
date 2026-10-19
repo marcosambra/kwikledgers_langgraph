@@ -197,6 +197,28 @@ class AtomicCLIContractTests(TestCase):
 
 
 class AtomicCLIIntegrationTests(AtomicRuntimeHarness, TestCase):
+    def test_title_edit_cli_requires_separate_approval_and_unchanged_arguments(self):
+        self.client.details.update(
+            work_item_type="Task", title="Combined task",
+            browser_url="https://dev.azure.com/org/Project/_workitems/edit/10",
+        )
+        payload = {"work_item_id": 10, "title": "Backend task"}
+        graph = self.graph("update_work_item_content", payload)
+        options = {"name": "update_work_item_content", "thread_id": self.id(), "arguments": payload}
+        first = run_atomic_cli(graph, **options)
+        self.assertEqual(first["pending_approval"]["preview"]["item_context"]["current_title"], "Combined task")
+        self.assertEqual(self.client.effects, [])
+        approval = {"resume": True, "approval_request_id": first["pending_approval"]["request_id"]}
+        with self.assertRaises(ValueError):
+            run_atomic_cli(graph, **{**options, "arguments": {**payload, "title": "Changed title"}}, **approval)
+        self.assertEqual(self.client.effects, [])
+        final = run_atomic_cli(graph, **options, **approval)
+        self.assertEqual(final["outcome"], "completed")
+        self.assertEqual(self.client.effects[0][1]["title"], "Backend task")
+        with self.assertRaises(ValueError):
+            run_atomic_cli(graph, **options, **approval)
+        self.assertEqual(len(self.client.effects), 1)
+
     def test_catalog_mutations_accept_separate_local_approval_without_any_key(self):
         self.journal.close()
         self.journal = LifecycleJournal(self.path)

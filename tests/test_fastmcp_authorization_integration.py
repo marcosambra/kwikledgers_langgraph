@@ -55,6 +55,8 @@ class AuthorizationFixture:
         preview = deepcopy(self.arguments)
         if action == "activate":
             preview["task_id"] = preview.pop("work_item_id")
+        if action == "atomic_update_work_item_content" and hasattr(self, "title_context"):
+            preview["item_context"] = deepcopy(self.title_context)
         pending = {
             "action": action,
             "preview": preview,
@@ -93,6 +95,27 @@ class AuthorizationFixture:
 
 
 class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase):
+    def test_title_edit_issuer_separates_display_context_and_binds_exact_title(self) -> None:
+        self.arguments = {"work_item_id": 11, "title": "Approved task title", "expected_revision": 2}
+        self.title_context = {
+            "current_title": "Old task title", "work_item_type": "Task",
+            "browser_url": "https://dev.azure.com/org/Project/_workitems/edit/11",
+        }
+        action = "atomic_update_work_item_content"
+        state = self.approved_state(action)
+        with lifecycle_scope(state, self.approvals):
+            trusted = active_state(action)
+            token = issue_lifecycle_execution_capability(
+                trusted, action=action, capability_name="update_work_item_content", arguments=self.arguments,
+            )
+            self.assertEqual(self.decode(token)["capability"], "update_work_item_content")
+            for changed in ({**self.arguments, "title": "Unapproved title"},
+                            {**self.arguments, "item_context": self.title_context}):
+                with self.subTest(arguments=changed), self.assertRaises(ExecutionCapabilityError):
+                    issue_lifecycle_execution_capability(
+                        trusted, action=action, capability_name="update_work_item_content", arguments=changed,
+                    )
+
     def test_genuine_independently_signed_receipt_binds_active_action(self) -> None:
         self.assertGreaterEqual(len(self.approval_key), 32)
         self.assertNotEqual(self.approval_key, self.execution_key.encode())
@@ -227,6 +250,17 @@ class LifecycleIssuerAuthorizationTests(AuthorizationFixture, unittest.TestCase)
 
 
 class FastMcpAuthorizationIntegrationTests(AuthorizationFixture, unittest.TestCase):
+    def test_title_edit_authorization_rejects_changed_title_and_blocks_replay(self) -> None:
+        self.arguments = {"work_item_id": 11, "title": "Approved task title", "expected_revision": 2}
+        self.title_context = {
+            "current_title": "Old task title", "work_item_type": "Task",
+            "browser_url": "https://dev.azure.com/org/Project/_workitems/edit/11",
+        }
+        token = self.issue(action="atomic_update_work_item_content")
+        self.verify(token, arguments={**self.arguments, "title": "Unapproved title"}, rejected="payload")
+        self.verify(token)
+        self.verify(token, rejected="consumida")
+
     def setUp(self) -> None:
         super().setUp()
         temporary = TemporaryDirectory()

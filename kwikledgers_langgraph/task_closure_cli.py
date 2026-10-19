@@ -6,6 +6,8 @@ from typing import Any
 
 from kwikledgers_langgraph.backend_factory import build_task_closure_ports, resolve_backend_name
 from kwikledgers_langgraph.guardrails import load_resume_confirmation
+from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
+from kwikledgers_langgraph.lifecycle_adapters import active_state
 from kwikledgers_langgraph.observability import (
     append_runtime_observability_artifacts,
     build_observability_context,
@@ -49,6 +51,8 @@ def _build_request(arguments: argparse.Namespace) -> TaskClosureRequest:
         request["fix_summary"] = arguments.fix_summary
     if getattr(arguments, "origin_task_id", None) is not None:
         request["origin_task_id"] = arguments.origin_task_id
+    if getattr(arguments, "extraordinary", False):
+        request["extraordinary"] = True
     return request
 
 
@@ -163,7 +167,18 @@ def _write_state_file(state: dict[str, Any], state_file_path: str) -> None:
 def run_task_closure(arguments: argparse.Namespace) -> dict[str, Any]:
     backend_name = resolve_backend_name(getattr(arguments, "backend", None))
     state = _build_runtime_state(arguments)
-    runtime = build_task_closure_runtime(build_task_closure_ports(backend_name=backend_name))
+    execution_provider = None
+    if backend_name == "fastmcp":
+        execution_provider = lambda name, arguments: issue_execution_capability(
+            active_state("task_closure"),
+            action="task_closure.execute",
+            capability_name=name,
+            arguments=arguments,
+        )
+    runtime = build_task_closure_runtime(build_task_closure_ports(
+        backend_name=backend_name,
+        execution_capability_provider=execution_provider,
+    ))
     result = runtime.invoke(state)
     if not isinstance(result, dict):
         raise RuntimeError("O runtime de fechamento de task retornou um estado final invalido.")
@@ -205,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work-kind", choices=("implementation", "fix"), default=None)
     parser.add_argument("--fix-summary", default=None, help="Problema corrigido na Task própria.")
     parser.add_argument("--origin-task-id", type=int, default=None, help="Task de origem da correção.")
+    parser.add_argument(
+        "--extraordinary",
+        action="store_true",
+        help="Usa o caminho supervisionado extraordinário para executar o preview sem task_cycle.",
+    )
     parser.add_argument("--source", default="task-closure-cli", help="Origem registrada no estado do runtime.")
     parser.add_argument(
         "--backend",

@@ -77,6 +77,9 @@ class AtomicNativeClient:
             self.details["revision"] += 1
         if self.failure:
             raise TimeoutError("Unknown outcome")
+        if name == "update_work_item_content" and "title" in arguments:
+            return {"executed": True, "id": self.details["id"], "title": arguments["title"],
+                    "revision": self.details["revision"]}
         return [] if self.invalid_result else {"executed": True, "native": name}
 
 
@@ -108,7 +111,9 @@ class AtomicRuntimeHarness:
         trusted = active_state(action)
         self.assertEqual(state["verified_lifecycle_binding"], trusted["verified_lifecycle_binding"])
         self.assertEqual(ATOMIC_ACTION_CAPABILITIES[action], capability_name)
-        self.assertEqual(state["verified_lifecycle_binding"]["preview"], arguments)
+        preview = deepcopy(state["verified_lifecycle_binding"]["preview"])
+        preview.pop("item_context", None)
+        self.assertEqual(preview, arguments)
         self.issued.append((action, capability_name, deepcopy(arguments)))
         return "test:execution-capability"
 
@@ -125,6 +130,138 @@ class AtomicRuntimeHarness:
     def approve(self, graph, config, first, receipt=None):
         return graph.invoke(Command(resume=receipt if receipt is not None else
                                     receipt_for(first["pending_approval"], issued=self.now)), config)
+
+
+class AtomicTitleTests(AtomicRuntimeHarness, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.details.update(
+            work_item_type="Task", title="Combined task",
+            browser_url="https://dev.azure.com/org/Project/_workitems/edit/10",
+        )
+        self.arguments = {"work_item_id": 10, "title": "[FETCH BANK] Paginate transactions"}
+
+    def test_title_preview_shows_current_and_proposed_title_without_writes(self):
+        _, _, first = self.preview("update_work_item_content", self.arguments)
+        preview = first["pending_approval"]["preview"]
+        self.assertEqual(preview["title"], self.arguments["title"])
+        self.assertEqual(preview["expected_revision"], 4)
+        self.assertEqual(preview["item_context"], {
+            "current_title": "Combined task", "work_item_type": "Task",
+            "browser_url": self.client.details["browser_url"],
+        })
+        self.assertTrue(first.get("__interrupt__"))
+        self.assertEqual(self.client.effects, [])
+        self.assertEqual(self.issued, [])
+
+    def test_title_edit_requires_nonempty_single_line_text(self):
+        for title in ("", "  ", "\n", "Title\nOther", "Title\rOther", None, 123, True):
+            with self.subTest(title=title), self.assertRaises(ValueError):
+                validate_arguments("update_work_item_content", {**self.arguments, "title": title})
+
+    def test_title_edit_only_supports_tasks(self):
+        for kind in ("User Story", "Bug", "Feature", "Epic", "Technical Debt"):
+            with self.subTest(kind=kind):
+                self.client.details["work_item_type"] = kind
+                graph = self.graph("update_work_item_content", self.arguments)
+                first = graph.invoke({"request": {}}, {"configurable": {"thread_id": self.id() + kind}})
+                self.assertEqual(first["outcome"], "blocked")
+        self.assertEqual(self.client.effects, [])
+
+    def test_title_edit_requires_authoritative_display_context(self):
+        for field in ("title", "browser_url"):
+            with self.subTest(field=field):
+                original = self.client.details.pop(field)
+                graph = self.graph("update_work_item_content", self.arguments)
+                first = graph.invoke({"request": {}}, {"configurable": {"thread_id": self.id() + field}})
+                self.assertEqual(first["outcome"], "blocked")
+                self.client.details[field] = original
+        self.assertEqual(self.client.effects, [])
+
+    def test_title_edit_approved_payload_excludes_display_metadata(self):
+        graph, config, first = self.preview("update_work_item_content", {
+            **self.arguments, "description": "<p>Backend scope</p>",
+        })
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "completed")
+        name, payload = self.client.effects[0]
+        self.assertEqual(name, "update_work_item_content")
+        self.assertEqual(payload, {
+            **self.arguments, "description": "<p>Backend scope</p>", "expected_revision": 4,
+            "execution_capability": "test:execution-capability",
+        })
+        self.assertNotIn("item_context", self.issued[0][2])
+        self.assertEqual(graph.invoke(None, config)["outcome"], "completed")
+        self.assertEqual(len(self.client.effects), 1)
+
+    def test_title_edit_rejects_boolean_approval(self):
+        graph, config, first = self.preview("update_work_item_content", self.arguments)
+        self.assertEqual(self.approve(graph, config, first, {"approved": True})["outcome"], "denied")
+        self.assertEqual(self.client.effects, [])
+
+    def test_title_edit_rechecks_revision_and_item_type(self):
+        for field, value in (("revision", 5), ("work_item_type", "Bug")):
+            with self.subTest(field=field):
+                graph = self.graph("update_work_item_content", self.arguments)
+                config = {"configurable": {"thread_id": self.id() + field}}
+                first = graph.invoke({"request": {}}, config)
+                original = self.client.details[field]
+                self.client.details[field] = value
+                self.assertEqual(self.approve(graph, config, first)["outcome"], "blocked")
+                self.client.details[field] = original
+        self.assertEqual(self.issued, [])
+        self.assertEqual(self.client.effects, [])
+
+    def test_title_edit_metadata_cannot_be_supplied_as_business_arguments(self):
+        with self.assertRaises(ValueError):
+            validate_arguments("update_work_item_content", {**self.arguments, "item_context": {}})
+
+    def test_title_edit_cannot_resume_a_different_title_or_display_context(self):
+        _, config, first = self.preview("update_work_item_content", self.arguments)
+        changed = self.graph("update_work_item_content", {**self.arguments, "title": "Unapproved"})
+        self.assertEqual(self.approve(changed, config, first)["outcome"], "blocked")
+        self.assertEqual(self.client.effects, [])
+
+    def test_title_edit_unknown_result_requires_reconciliation_and_is_not_retried(self):
+        graph, config, first = self.preview("update_work_item_content", self.arguments)
+        self.client.failure = True
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "reconciliation_required")
+        self.assertIsNone(self.journal.get(first["run_id"] + ":atomic_update_work_item_content:result"))
+        self.assertIsNotNone(self.journal.get(first["run_id"] + ":atomic_update_work_item_content:intent"))
+        self.assertEqual(graph.invoke(None, config)["outcome"], "reconciliation_required")
+        self.assertEqual(len(self.client.effects), 1)
+
+    def test_title_edit_server_error_requires_reconciliation(self):
+        from kwikledgers_langgraph.fastmcp_client import FastMCPClient
+
+        graph, config, first = self.preview("update_work_item_content", self.arguments)
+        original = self.client.call
+
+        def server_error(name, arguments):
+            if name == "update_work_item_content":
+                original(name, arguments)
+                return FastMCPClient._normalize(SimpleNamespace(isError=True), name)
+            return original(name, arguments)
+
+        with patch.object(self.client, "call", side_effect=server_error):
+            result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "reconciliation_required")
+        self.assertEqual(len(self.client.effects), 1)
+        self.assertIsNone(self.journal.get(first["run_id"] + ":atomic_update_work_item_content:result"))
+
+    def test_title_edit_unconfirmed_native_title_is_not_successful(self):
+        graph, config, first = self.preview("update_work_item_content", self.arguments)
+        original = self.client.call
+
+        def different_title(name, arguments):
+            result = original(name, arguments)
+            return {**result, "title": "Unexpected"} if name == "update_work_item_content" else result
+
+        with patch.object(self.client, "call", side_effect=different_title):
+            result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "reconciliation_required")
+        self.assertEqual(len(self.client.effects), 1)
 
 
 class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):

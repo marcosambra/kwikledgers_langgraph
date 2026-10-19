@@ -244,6 +244,34 @@ class WorkItemCreationTests(CreationHarness, TestCase):
         self.issuer.assert_not_called()
         self.assertFalse(self.effects)
 
+    def test_task_under_bug_requires_approval_and_confirms_snapshot(self):
+        self.parent["work_item_type"] = "Bug"
+        graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
+                                             "parent_work_item_id": 10})
+        self.assertTrue(first["__interrupt__"])
+        self.assertEqual(first["context"]["creation_parent"]["work_item_type"], "Bug")
+        self.assertFalse(self.effects)
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "completed")
+        self.assertTrue(result["results"]["confirm_snapshot"]["snapshot_confirmed"])
+        self.assertEqual(len(self.effects), 1)
+
+    def test_bug_parent_revision_change_blocks_task_creation(self):
+        self.parent["work_item_type"] = "Bug"
+        graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
+                                             "parent_work_item_id": 10})
+        self.parent["revision"] += 1
+        self.assertEqual(self.approve(graph, config, first)["outcome"], "blocked")
+        self.issuer.assert_not_called()
+        self.assertFalse(self.effects)
+
+    def test_bug_parent_remains_disallowed_for_bug_creation(self):
+        self.parent["work_item_type"] = "Bug"
+        graph, config, first = self.preview({**self.arguments, "work_item_type": "Bug",
+                                             "parent_work_item_id": 10})
+        self.assertEqual(first["outcome"], "blocked")
+        self.assertFalse(self.effects)
+
     def test_invalid_or_replayed_receipt_cannot_create(self):
         graph, config, first = self.preview()
         self.assertEqual(self.approve(graph, config, first, {"approved": True})["outcome"], "denied")

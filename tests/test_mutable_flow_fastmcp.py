@@ -308,7 +308,7 @@ class MutableFastMCPGraphTests(ReceiptFixture):
         )
         return cases if include_preview_only else (cases[0], cases[2])
 
-    def test_pr_and_task_closure_require_governed_lifecycle_without_offering_approval(self) -> None:
+    def test_pr_requires_lifecycle_but_extraordinary_task_closure_has_native_path(self) -> None:
         client = VerifyingClient()
         for runtime, prefix, request, _capability, _cli in self.cases(client, include_preview_only=True):
             if prefix not in {"pull_request", "task_closure"}:
@@ -319,10 +319,14 @@ class MutableFastMCPGraphTests(ReceiptFixture):
                 self.assertEqual(result["pending_approval"], {})
                 self.assertTrue(result["errors"])
                 self.assertTrue(result[f"{prefix}_preview"]["execution_requires_lifecycle"])
-        for adapter, method in ((FastMCPStoryPullRequestAdapter(client), "create_story_pull_request"),
-                                (FastMCPTaskClosureAdapter(client), "close_task")):
-            with self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
-                getattr(adapter, method)({"execution_capability": "cannot-bypass"})
+        with self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
+            FastMCPStoryPullRequestAdapter(client).create_story_pull_request(
+                {"execution_capability": "cannot-bypass"},
+            )
+        with self.assertRaisesRegex(RuntimeError, "allowed approved preview"):
+            FastMCPTaskClosureAdapter(client).close_task(
+                {"execution_capability": "cannot-bypass"},
+            )
         self.assertEqual(client.executions, [])
 
     def initial(self, prefix: str, request: dict) -> dict:

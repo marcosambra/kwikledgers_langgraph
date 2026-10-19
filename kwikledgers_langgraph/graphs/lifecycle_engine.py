@@ -93,6 +93,8 @@ def build_lifecycle_graph(
                 context = {**context, **{field: deepcopy(supplied[field])
                                         for field in ("work_kind", "fix_summary", "origin_task_id")
                                         if supplied.get(field) is not None}}
+            if name == "task_hours":
+                context = {**context, "completed_work_hours": deepcopy(supplied.get("completed_work_hours"))}
             preview_digest(context)
             for field in required_context:
                 if not context.get(field):

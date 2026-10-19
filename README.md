@@ -14,6 +14,21 @@ O host consulta `python -m kwikledgers_langgraph.state_persistence --inspect
 workflow. No fechamento, `--work-kind fix`, `--fix-summary` e `--origin-task-id`
 propagam o contexto da correção para a política existente de Task própria.
 
+A edição supervisionada de título de uma Task existente reutiliza
+`python -m kwikledgers_langgraph.atomic_cli mutation update_work_item_content`.
+O JSON de argumentos aceita `work_item_id` e `title` (texto não vazio, em uma
+linha), opcionalmente junto de descrição, critérios ou comentário. Renomear
+outros tipos de item permanece bloqueado. A prévia contém o título atual,
+o novo título, tipo, URL de navegação e revisão; `item_context` é contexto
+somente de apresentação e nunca argumento enviado ao FastMCP. Aprovar exige
+uma invocação posterior com `--resume --approval-request-id`, usando o mesmo
+checkpoint, thread e argumentos. Alterar o título aprovado, o contexto ou a
+revisão exige nova prévia. Erro após envio ou título/revisão não confirmados
+retornam `reconciliation_required`, sem repetição automática da escrita.
+Status, sprint, pai, responsável e horas não são alterados por essa edição.
+A topologia, os eventos e os nomes de métricas existentes são preservados;
+o catálogo operacional deriva o novo campo do schema, sem nova capability.
+
 No `task_cycle`, o plano configurado pelo operador autoriza implementação,
 testes e commit locais contínuos. Não há confirmações redundantes para esses
 passos. O runtime ainda exige contexto/hierarquia válidos, início de história

@@ -313,13 +313,18 @@ class FastMCPAdaptersTestCase(unittest.TestCase):
             }))
         self.assertEqual(len(client.calls), 1)
 
-    def test_isolated_pr_and_closure_refuse_writes_even_with_a_token(self) -> None:
+    def test_isolated_pr_refuses_and_closure_requires_approved_preview(self) -> None:
         client = RecordingClient()
-        for adapter, method in ((FastMCPStoryPullRequestAdapter(client), "create_story_pull_request"),
-                                (FastMCPTaskClosureAdapter(client), "close_task")):
-            for token in (None, "token"):
-                with self.subTest(method=method, token=token), self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
-                    getattr(adapter, method)({"execution_capability": token})
+        for token in (None, "token"):
+            with self.subTest(method="create_story_pull_request", token=token), self.assertRaisesRegex(RuntimeError, "requires lifecycle"):
+                FastMCPStoryPullRequestAdapter(client).create_story_pull_request(
+                    {"execution_capability": token},
+                )
+        for token in (None, "token"):
+            with self.subTest(method="close_task", token=token), self.assertRaisesRegex(RuntimeError, "allowed approved preview"):
+                FastMCPTaskClosureAdapter(client).close_task(
+                    {"execution_capability": token},
+                )
         self.assertEqual(client.calls, [])
 
     def test_status_preview_uses_native_revision_not_synthetic_text(self) -> None:

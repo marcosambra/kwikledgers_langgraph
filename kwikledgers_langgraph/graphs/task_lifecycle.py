@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
@@ -109,3 +110,34 @@ def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
         LifecycleStep("hours", hours_preview, hours),
         LifecycleStep("close", close_preview, close),
     ), name="task_cycle", checkpointer=checkpointer)
+
+
+def build_task_hours_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
+    _require_ports(ports, "work_items")
+
+    def hours_preview(state: LifecycleState) -> dict[str, Any]:
+        value = state["request"].get("completed_work_hours")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValueError("completed_work_hours must be a positive finite number")
+        snapshot = ports.context.snapshot(state["context"])
+        revision = snapshot.get("revision")
+        if type(revision) is not int or revision <= 0:
+            raise ValueError("Task snapshot requires a positive native revision")
+        return {
+            "task_id": state["context"]["task_id"],
+            "completed_work_hours": float(value),
+            "expected_revision": revision,
+            "hours_only": True,
+        }
+
+    def hours(state: LifecycleState, preview: dict[str, Any], key: str) -> dict[str, Any]:
+        if hours_preview(state) != preview:
+            raise ValueError("Task changed after hours preview")
+        return ports.work_items.hours(preview, key=key)
+
+    return build_lifecycle_graph(
+        ports,
+        (LifecycleStep("hours", hours_preview, hours),),
+        name="task_hours",
+        checkpointer=checkpointer,
+    )

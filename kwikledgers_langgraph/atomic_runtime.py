@@ -8,7 +8,7 @@ import math
 from typing import Any
 
 from kwikledgers_langgraph.adapters import LifecyclePorts
-from kwikledgers_langgraph.fastmcp_client import CapabilityClient
+from kwikledgers_langgraph.fastmcp_client import CapabilityClient, FastMCPClientError
 from kwikledgers_langgraph.graphs.lifecycle_engine import LifecycleStep, build_lifecycle_graph
 from kwikledgers_langgraph.lifecycle_adapters import (
     LifecycleGateway, active_state, require_approved_preview,
@@ -51,7 +51,7 @@ PREVIEW_SCHEMAS = {
 MUTATION_SCHEMAS = {
     "add_story_comment": AtomicSchema(("story_id", "comment")),
     "move_work_item_to_next_sprint": AtomicSchema(("work_item_id",), ("comment",)),
-    "update_work_item_content": AtomicSchema(("work_item_id",), ("description", "acceptance_criteria", "comment")),
+    "update_work_item_content": AtomicSchema(("work_item_id",), ("title", "description", "acceptance_criteria", "comment")),
     "create_calendar_event": AtomicSchema(("title", "start", "end"), ("description", "reminder_minutes")),
     "schedule_reminder": AtomicSchema(("title", "remind_at", "message")),
     "send_notification": AtomicSchema(("title", "message"), ("urgency",)),
@@ -171,10 +171,13 @@ def validate_arguments(name: str, arguments: dict[str, Any], *, technical: bool 
             _child_tasks(value)
         else:
             raise ValueError("Unvalidated atomic field")
-    if name == "update_work_item_content" and not any(
-            isinstance(arguments.get(field), str) and arguments[field].strip()
-            for field in ("description", "acceptance_criteria", "comment")):
-        raise ValueError("A nonempty content edit is required")
+    if name == "update_work_item_content":
+        if "title" in arguments and (not arguments["title"].strip()
+                                     or "\n" in arguments["title"] or "\r" in arguments["title"]):
+            raise ValueError("Task title must be nonempty single-line text")
+        if not any(isinstance(arguments.get(field), str) and arguments[field].strip()
+                   for field in ("title", "description", "acceptance_criteria", "comment")):
+            raise ValueError("A nonempty content edit is required")
     if name == "send_notification" and arguments.get("urgency", "normal") not in {"normal", "high"}:
         raise ValueError("Invalid notification urgency")
     if name == "update_task_control":
@@ -217,7 +220,7 @@ def _details(client: CapabilityClient, identifier: int) -> dict[str, Any]:
             "work_item_type": result.get("work_item_type", fields.get("System.WorkItemType"))}
 
 
-def _content_policy(name: str, details: dict[str, Any]) -> None:
+def _content_policy(name: str, details: dict[str, Any], arguments: dict[str, Any]) -> None:
     if name != "update_work_item_content":
         return
     kind = details.get("work_item_type")
@@ -225,6 +228,32 @@ def _content_policy(name: str, details: dict[str, Any]) -> None:
         raise ValueError("Native work item type required for content edits")
     if kind.casefold().replace("_", " ").replace("-", " ") not in {"task", "bug", "user story", "story"}:
         raise LifecycleRequired("Work item content requires its specific lifecycle (including technical debt)")
+    if "title" in arguments and kind.casefold() != "task":
+        raise LifecycleRequired("Title edits are only supported for Tasks")
+
+
+def _title_context(details: dict[str, Any], identifier: int) -> dict[str, str]:
+    title = details.get("title")
+    url = details.get("browser_url")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("Authoritative current title required")
+    if (not isinstance(url, str) or not url.startswith("https://")
+            or not url.endswith(f"/_workitems/edit/{identifier}") or "/_apis/" in url):
+        raise ValueError("Authoritative work item browser URL required")
+    return {"current_title": title, "work_item_type": details["work_item_type"], "browser_url": url}
+
+
+def atomic_preview_arguments(name: str, preview: dict[str, Any]) -> dict[str, Any]:
+    payload = deepcopy(preview)
+    if name == "update_work_item_content" and "title" in payload:
+        context = payload.pop("item_context", None)
+        if (not isinstance(context, dict)
+                or set(context) != {"current_title", "work_item_type", "browser_url"}
+                or not isinstance(context.get("work_item_type"), str)
+                or context["work_item_type"].casefold() != "task"):
+            raise ValueError("Task title preview requires authoritative display context")
+        _title_context({"title": context["current_title"], **context}, payload.get("work_item_id"))
+    return validate_arguments(name, payload, technical=True)
 
 
 class AtomicLifecycleGateway(LifecycleGateway):
@@ -232,7 +261,7 @@ class AtomicLifecycleGateway(LifecycleGateway):
         if ATOMIC_ACTION_CAPABILITIES.get(action) != name:
             raise ValueError("Capability not allowed for this atomic lifecycle action")
         require_approved_preview(action, arguments)
-        payload = validate_arguments(name, arguments, technical=True)
+        payload = atomic_preview_arguments(name, arguments)
         if self.execution_issuer is None:
             raise RuntimeError("MAIN must provide issue_lifecycle_execution_capability for atomic actions")
 
@@ -240,14 +269,35 @@ class AtomicLifecycleGateway(LifecycleGateway):
             if name in REVISION_TARGETS:
                 identifier = payload[REVISION_TARGETS[name]]
                 fresh = _details(self.client, identifier)
-                _content_policy(name, fresh)
+                _content_policy(name, fresh, payload)
                 if fresh["revision"] != payload.get("expected_revision"):
                     raise ValueError("Native revision changed; obtain a new preview and receipt")
+                if "title" in payload and arguments["item_context"] != _title_context(fresh, identifier):
+                    raise ValueError("Title context changed; obtain a new preview")
             state = active_state(action)
             token = self.execution_issuer(state, action=action, capability_name=name, arguments=deepcopy(payload))
             if not isinstance(token, str) or not token.strip():
                 raise ValueError("Execution capability missing")
-            return self.client.call(name, {**payload, "execution_capability": token})
+            title_edit = name == "update_work_item_content" and "title" in payload
+            try:
+                result = self.client.call(name, {**payload, "execution_capability": token})
+            except FastMCPClientError:
+                if not title_edit:
+                    raise
+                raise FastMCPClientError(
+                    "Task title update was dispatched; reconcile the result before retry.",
+                    execution_outcome_unknown=True,
+                ) from None
+            if title_edit and (
+                not isinstance(result, dict) or result.get("id") != payload["work_item_id"]
+                or result.get("title") != payload["title"] or not _positive_id(result.get("revision"))
+                or result["revision"] <= payload["expected_revision"]
+            ):
+                raise FastMCPClientError(
+                    "Azure did not confirm the approved task title and revision; reconcile before retry.",
+                    execution_outcome_unknown=True,
+                )
+            return result
 
         return self.journal.once(key, payload, invoke)
 
@@ -279,15 +329,19 @@ def build_atomic_runtime(name: str, ports: LifecyclePorts, *, checkpointer: Any,
         payload = deepcopy(supplied)
         if name in REVISION_TARGETS:
             details = _details(atomic.client, payload[REVISION_TARGETS[name]])
-            _content_policy(name, details)
+            _content_policy(name, details, payload)
             payload["expected_revision"] = details["revision"]
-        return validate_arguments(name, payload, technical=True)
+            if "title" in payload:
+                payload["item_context"] = _title_context(details, payload["work_item_id"])
+        atomic_preview_arguments(name, payload)
+        return payload
 
     def execute(state: dict[str, Any], preview: dict[str, Any], key: str) -> dict[str, Any]:
         context = state["context"]
         if context.get("atomic_capability") != name or context.get("atomic_arguments") != supplied:
             raise ValueError("Atomic checkpoint context changed")
-        expected = {field: value for field, value in preview.items() if field != "expected_revision"}
+        expected = {field: value for field, value in atomic_preview_arguments(name, preview).items()
+                    if field != "expected_revision"}
         if expected != supplied:
             raise ValueError("Atomic preview differs from requested technical payload")
         return atomic.execute(action, name, preview, key)

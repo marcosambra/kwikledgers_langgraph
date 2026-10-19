@@ -32,6 +32,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--work-kind", choices=("implementation", "fix"))
     result.add_argument("--fix-summary")
     result.add_argument("--origin-task-id", type=int)
+    result.add_argument("--completed-work-hours", type=float)
     result.add_argument("--preview-key")
     result.add_argument("--resume", action="store_true")
     resume = result.add_mutually_exclusive_group()
@@ -198,7 +199,8 @@ def main(argv: list[str] | None = None) -> int:
                              branch_type=args.branch_type, request={"story_id": args.story_id,
                              "task_id": args.task_id, "repository_name": args.repository_name,
                              "work_kind": args.work_kind, "fix_summary": args.fix_summary,
-                             "origin_task_id": args.origin_task_id})
+                             "origin_task_id": args.origin_task_id,
+                             "completed_work_hours": args.completed_work_hours})
             record_cli_metrics(graph.get_state({"configurable": {"thread_id": args.thread_id}}).values, output)
             print(json.dumps(output, ensure_ascii=True, allow_nan=False))
             return lifecycle_exit_code(output)

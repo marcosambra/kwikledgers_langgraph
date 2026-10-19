@@ -9,6 +9,16 @@ from kwikledgers_langgraph.graph_catalog import InspectionPort, graph_catalog, m
 
 
 class GraphCatalogTests(TestCase):
+    def test_title_edit_is_exposed_only_as_supervised_atomic_content(self):
+        catalog = operational_catalog()
+        capability = next(item for item in catalog["atomic_capabilities"]
+                          if item["id"] == "update_work_item_content")
+        self.assertIn("title", capability["argument_fields"]["optional"])
+        self.assertNotIn("item_context", capability["argument_fields"]["optional"])
+        self.assertEqual(capability["approval"], "explicit_after_preview")
+        self.assertEqual(capability["resume_option"], "--resume")
+        self.assertEqual(capability["approval_option"], "--approval-request-id")
+
     def test_catalog_contains_actual_topologies_without_executing_ports(self):
         with patch.object(InspectionPort, "blocked", side_effect=AssertionError("Unexpected IO")) as blocked:
             catalog = graph_catalog()

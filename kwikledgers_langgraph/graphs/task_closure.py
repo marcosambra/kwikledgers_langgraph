@@ -56,6 +56,9 @@ def build_task_closure_graph(ports: TaskClosurePorts) -> Any:
             preview["task_revision"] = revision
             if native_preview.get("execution_requires_lifecycle"):
                 preview["execution_requires_lifecycle"] = native_preview["execution_requires_lifecycle"]
+            if effective_request.get("extraordinary") is True:
+                preview["extraordinary"] = True
+                preview.pop("execution_requires_lifecycle", None)
             return preview
 
         def preview_validator(state: AgentState, _request: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any] | None:
