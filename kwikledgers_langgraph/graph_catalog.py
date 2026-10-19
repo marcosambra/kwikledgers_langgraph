@@ -21,6 +21,8 @@ class GraphSpecification:
 
 
 GRAPH_SPECIFICATIONS = (
+    GraphSpecification("work_item_creation_config", adapters.WorkItemCreationConfigPorts,
+                       "work_item_creation_config_cli", ("azure_read", "local_configuration_write")),
     GraphSpecification("daily_summary", adapters.DailySummaryPorts, "cli",
                        ("azure_read", "local_tracking_write", "optional_notification")),
     GraphSpecification("sprint_stories", adapters.SprintStoriesPorts, "sprint_stories_cli", ("azure_read",)),
@@ -145,6 +147,7 @@ def operational_catalog() -> dict[str, Any]:
         "completion_criteria": ["explicit_approval", "work_item_persisted",
                                 "task_snapshot_and_responsible_confirmed"],
         "argument_fields": sorted(NATIVE_FIELDS),
+        "operator_config_entry_point": _entry_point("work_item_creation_config_cli"),
     })
     capabilities = []
     for kind, schemas in (("read", READ_SCHEMAS), ("preview", PREVIEW_SCHEMAS),

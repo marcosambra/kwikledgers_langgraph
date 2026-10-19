@@ -145,6 +145,11 @@ class FastMCPDailySummaryProvider(_FastMCPAdapter):
         return self.client.call("get_my_daily_summary", dict(self.arguments))
 
 
+class FastMCPWorkItemProcessMetadataAdapter(_FastMCPAdapter):
+    def fetch_work_item_process_metadata(self) -> dict[str, Any]:
+        return self.client.call("get_work_item_process_metadata", {})
+
+
 class FastMCPDayEndClosureAdapter(_FastMCPAdapter):
     def collect_day_context(self, request: dict[str, Any]) -> dict[str, Any]:
         zone = _resolve_timezone(request.get("timezone"))

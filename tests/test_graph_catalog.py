@@ -13,7 +13,7 @@ class GraphCatalogTests(TestCase):
         with patch.object(InspectionPort, "blocked", side_effect=AssertionError("Unexpected IO")) as blocked:
             catalog = graph_catalog()
         blocked.assert_not_called()
-        self.assertEqual(len(catalog), 12)
+        self.assertEqual(len(catalog), 13)
         json.dumps(catalog, allow_nan=False)
         for graph in catalog:
             with self.subTest(graph=graph["id"]):
@@ -73,6 +73,9 @@ class GraphCatalogTests(TestCase):
         self.assertEqual(flows["story_start"]["resume_option"], "--resume")
         self.assertEqual(flows["day_end_closure"]["approval"], "runtime_policy")
         self.assertIn("task_snapshot_and_responsible_confirmed", flows["work_item_creation"]["completion_criteria"])
+        self.assertEqual(flows["work_item_creation"]["operator_config_entry_point"],
+                         flows["work_item_creation_config"]["entry_point"])
+        self.assertEqual(flows["work_item_creation_config"]["approval"], "not_required")
 
     def test_atomic_argument_fields_and_lifecycle_restrictions_come_from_existing_schemas(self):
         from kwikledgers_langgraph.atomic_runtime import (
@@ -102,4 +105,4 @@ class GraphCatalogTests(TestCase):
                 self.assertEqual(value["version"], 1)
             else:
                 self.assertIsInstance(value, list)
-                self.assertEqual(len(value), 12)
+                self.assertEqual(len(value), 13)

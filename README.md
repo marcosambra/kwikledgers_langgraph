@@ -69,6 +69,29 @@ reutilizar um resultado já persistido também emite `duplicate_prevented`.
 O catálogo declara pré-requisitos, ajuda pública como
 contrato de argumentos e critérios de conclusão; isso não valida integrações.
 
+## Configuração operacional para criação
+
+A entrada `work_item_creation_config_cli` consulta os metadados nativos do
+processo Azure e prepara o JSON aceito por `work_item_creation_cli
+--operator-config`. Requer `AZURE_PROJECT`, `AZURE_PROJECT_AREA`, repositórios
+explicitamente selecionados e um servidor FastMCP que exponha
+`get_work_item_process_metadata`; a publicação do cliente não publica essa
+capacidade no repositório do servidor.
+
+Na raiz deste repositório:
+
+```bash
+poetry run python -m kwikledgers_langgraph.work_item_creation_config_cli \
+  --repository accountant_frontend=../projects/accountant_frontend \
+  --output ../AI_Tracking/operator-creation.json
+```
+
+O comando não cria work items nem aprova operações Azure. A saída é um arquivo
+local novo; arquivos existentes não são substituídos. Metadados incompletos ou
+indisponíveis bloqueiam a preparação, sem inventar restrições. O fluxo aparece
+no catálogo operacional e mantém os eventos e artefatos de observabilidade
+existentes; a criação posterior continua sujeita à prévia e aprovação próprias.
+
 ## Contexto Da Task
 
 ### Handoff da extensão para o Copilot

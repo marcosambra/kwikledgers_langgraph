@@ -23,6 +23,7 @@ class AtomicSchema:
 
 READ_SCHEMAS = {
     "get_active_user": AtomicSchema(),
+    "get_work_item_process_metadata": AtomicSchema(),
     "get_my_work_items": AtomicSchema(),
     "get_my_blocked_items": AtomicSchema(),
     "get_my_daily_summary": AtomicSchema(),

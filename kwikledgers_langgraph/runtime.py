@@ -10,6 +10,7 @@ from kwikledgers_langgraph.adapters import (
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
     TaskClosurePorts,
+    WorkItemCreationConfigPorts,
 )
 
 
@@ -18,6 +19,12 @@ MUTABLE_RUNTIME_BUILDERS: dict[str, str] = {
     "story_branch_association": "build_story_branch_association_runtime",
     "story_status_transition": "build_story_status_transition_runtime",
 }
+
+
+def build_work_item_creation_config_runtime(ports: WorkItemCreationConfigPorts) -> Any:
+    from kwikledgers_langgraph.graphs.work_item_creation_config import build_work_item_creation_config_graph
+
+    return build_work_item_creation_config_graph(ports)
 
 
 def build_daily_summary_runtime(ports: DailySummaryPorts) -> Any:

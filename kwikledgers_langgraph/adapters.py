@@ -66,6 +66,16 @@ class SprintStoriesProvider(Protocol):
         """Return detailed stories for the active sprint."""
 
 
+class WorkItemProcessMetadataPort(Protocol):
+    def fetch_work_item_process_metadata(self) -> dict[str, Any]:
+        """Read native project, area and work item field constraints."""
+
+
+@dataclass(frozen=True)
+class WorkItemCreationConfigPorts:
+    metadata: WorkItemProcessMetadataPort
+
+
 @dataclass(frozen=True)
 class DailySummaryPorts:
     provider: DailySummaryProvider

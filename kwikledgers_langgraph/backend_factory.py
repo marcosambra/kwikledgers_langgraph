@@ -15,6 +15,7 @@ from kwikledgers_langgraph.adapters import (
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
     TaskClosurePorts,
+    WorkItemCreationConfigPorts,
 )
 from kwikledgers_langgraph.runtime_adapters import (
     EnvironmentIdentityResolverAdapter,
@@ -29,6 +30,16 @@ BACKEND_ENV_VAR = "KWIKLEDGERS_LANGGRAPH_BACKEND"
 
 class BackendSelectionError(RuntimeError):
     """Raised when a backend is invalid or not yet available for a capability."""
+
+
+def build_work_item_creation_config_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+) -> WorkItemCreationConfigPorts:
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPWorkItemProcessMetadataAdapter
+
+        return WorkItemCreationConfigPorts(metadata=FastMCPWorkItemProcessMetadataAdapter(client))
+    raise BackendSelectionError("Backend indisponivel para a configuracao de criacao.")
 
 
 def build_day_end_closure_ports(

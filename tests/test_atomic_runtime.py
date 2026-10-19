@@ -137,8 +137,8 @@ class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
             "move_work_item_to_next_sprint", "update_story_status", "add_story_comment", "sync_daily_tracking",
             "update_task_control", "append_daily_action_log", "record_ai_metrics", "read_tracking_snapshot",
             "send_notification", "create_calendar_event", "get_upcoming_deadlines", "schedule_reminder"}
-        self.assertEqual(set(CAPABILITY_CATALOG), expected | {"get_sprint_work_report"})
-        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (13, 2, 9, 7))
+        self.assertEqual(set(CAPABILITY_CATALOG), expected | {"get_sprint_work_report", "get_work_item_process_metadata"})
+        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (14, 2, 9, 7))
 
     def test_all_reads_and_previews_call_native_directly(self):
         for name in (*READ_SCHEMAS, *PREVIEW_SCHEMAS):

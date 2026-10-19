@@ -144,6 +144,9 @@ class AgentState(TypedDict, total=False):
     day_end_closure_result: dict[str, Any]
     sprint_stories_request: dict[str, Any]
     sprint_stories_result: dict[str, Any]
+    work_item_creation_config_request: dict[str, Any]
+    work_item_creation_config_metadata: dict[str, Any]
+    work_item_creation_config_result: dict[str, Any]
     pending_approval: ApprovalRequest
     approval_confirmation: ApprovalConfirmation
     approval_resume_ready: bool
