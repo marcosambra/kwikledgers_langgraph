@@ -70,9 +70,10 @@ fixtures não autorizam mutações externas.
 ## Gates Operacionais de Retirada
 
 - [ ] Definir janela limitada de observação, responsáveis e rollback.
-- [x] Identificar consumidores nas superfícies conhecidas: MCP/hooks do workspace nativos; 40 configurações em 20 diretórios sob `projects/` sem referências legadas; tarefa Windows `KwikLedgers Daily Summary` e cron `kwikledgers-day-end-closure` ainda legados. Nenhum produto foi alterado.
-- [ ] Obter aprovação explícita do usuário antes de alterar qualquer superfície protegida.
-- [ ] Desativar apenas consumidores autorizados e registrar a validação pós-retirada.
+- [x] Identificar consumidores nas superfícies conhecidas: MCP/hooks do workspace nativos; 40 configurações em 20 diretórios sob `projects/` sem referências legadas; tarefa Windows e cron legados identificados e posteriormente migrados. Nenhum produto foi alterado.
+- [x] Obter aprovação explícita para os dois agendamentos: recebida em 2026-10-19.
+- [x] Migrar somente os comandos dos dois agendamentos aprovados, exportando backups e verificando configurações preservadas; resumo diário real aprovado e fechamento em `dry_run` sem alterações.
+- [ ] Observar as próximas execuções naturais dos agendamentos, sem antecipar os gatilhos.
 
 A troca de backend não equivale ao desligamento desses consumidores.
 Pendências operacionais são separadas das implementações técnicas locais.
@@ -93,6 +94,24 @@ O host registrou `2026-10-19`, enquanto a solicitação informa `2026-10-17`.
 Não houve ajuste do relógio, antecipação de gatilhos nem inferência de horas
 de trabalho a partir dessa divergência. A observação de uma execução agendada
 continua pendente.
+
+## Migração Aprovada dos Agendamentos em 2026-10-19
+
+Tarefa Windows migrada para `kwikledgers_langgraph.cli --backend fastmcp`,
+com principal, gatilhos, configurações e diretório de trabalho preservados.
+O comando persistido foi executado pelo Windows/WSL e retornou `completed`,
+sem erro de métricas ou notificações. Próximo gatilho observado: 20/10 às 09h.
+
+Cron migrado pelo registrador oficial para FastMCP com `--dry-run`, preservando
+segunda a sexta às 18h, arquivo de ambiente, notificação e entradas alheias.
+O smoke retornou `skipped/before_cutoff`, `changed=false`, sem erros; os 20 testes
+de fechamento diário passaram. Isso valida a proteção antes das 18h, não uma
+prévia com Tasks reais nem uma execução natural do agendador.
+
+Backups e logs permanecem na pasta de sessão `scheduler-migration-20261019`.
+A exportação XML pelo compartilhamento local WSL gerou alerta corporativo;
+nenhuma política foi contornada e não foram realizadas novas cópias de rede.
+Detalhes estão no guia operacional e no histórico do workspace.
 
 ## Critérios de Conclusão
 
