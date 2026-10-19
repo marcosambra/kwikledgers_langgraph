@@ -84,3 +84,20 @@ A fronteira de confiança é a conta e suas permissões locais. Este contrato n�
 comprova identidade externa nem protege contra processos da mesma conta com
 escrita no ledger. Não há nesta nota nova declaração de suíte completa aprovada
 nem de validação operacional externa.
+
+## Correção do Contrato e Evidência Operacional da Retomada de 2026-10-17
+
+A afirmação histórica acima sobre compatibilidade opcional de HMAC e recibos
+assinados foi superada: o runtime atual rejeita recibos antigos, mesmo quando
+suas chaves estão configuradas. A aprovação usa prévia e retomada separadas
+com `--approval-request-id`; os tokens de execução são `.local-v1`, com ledger
+compartilhado, TTL de até cinco minutos e anti-replay. O backend `legacy` foi
+removido, não é uma opção de rollback. Estados antigos assinados ainda exigem
+a chave original; isso não restaura aprovação por recibo antigo.
+
+Na retomada, foram executados Azure autenticado somente leitura, resumo diário,
+refresh compilado da extensão, leitura compartilhada de métricas, calendário
+Outlook e ativação/comandos/restauração em Extension Host real. Os comandos,
+as revisões, as tentativas que falharam e os bloqueios restantes estão no
+[guia operacional atualizado](../../docs/validation/fastmcp-langgraph-legacy-sunset.md).
+Essa evidência não reclassifica os resultados nem os limites de 2026-10-09.

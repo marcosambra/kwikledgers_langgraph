@@ -54,25 +54,45 @@ Não há proteção contra processos da mesma conta com escrita no ledger.
 
 - [x] Executar e registrar a suíte completa do LangGraph de 2026-10-09 (evidência histórica, não validação final do novo contrato).
 - [x] Concluir integração local da criação governada com recibo e emissor reais sob fixtures na rodada de 2026-10-09.
-- [ ] Validar restrições reais do host/processo para a criação governada.
+- [ ] Validar restrições reais do host/processo para a criação governada: configuração operacional confiável não encontrada; não fabricar `process_constraints` nem consultar funções internas como fallback.
 - [x] Rejeitar recibos obsoletos e exigir nova prévia/retomada local explícita, sem compatibilidade de aprovação assinada.
-- [ ] Executar smoke Azure autenticado de leitura; identidade local não comprova autenticação Azure.
-- [ ] Executar calendário Windows real no host suportado.
+- [x] Executar smoke Azure autenticado de leitura: `get_my_work_items`, resumo diário e refresh real pelo cliente compilado da extensão aprovados com a CA do sistema.
+- [x] Executar calendário Windows real no host suportado: leitura `get_upcoming_deadlines` com `days=1` aprovada, sem criar compromissos.
+- [x] Validar ativação, comandos e restauração dos painéis em Extension Host Windows isolado; confirmar leitura do ledger real pela extensão.
 - [ ] Executar instalações de especialistas preparadas e registrar resultados.
 - [ ] Executar pipelines preparados e registrar resultados.
 
-Não houve escrita Azure real nem instalação do cron. Commits locais autorizados
-e testes com fixtures não autorizam mutações externas.
+Não houve escrita Azure real nem alteração dos agendamentos nesta validação.
+O inventário encontrou cron preexistente com backend removido e tarefa Windows
+apontando para arquivos removidos. Commits locais autorizados e testes com
+fixtures não autorizam mutações externas.
 
 ## Gates Operacionais de Retirada
 
 - [ ] Definir janela limitada de observação, responsáveis e rollback.
-- [ ] Identificar consumidores ainda legados, incluindo agente raiz e ferramentas, scheduler e configurações de projetos.
+- [x] Identificar consumidores nas superfícies conhecidas: MCP/hooks do workspace nativos; 40 configurações em 20 diretórios sob `projects/` sem referências legadas; tarefa Windows `KwikLedgers Daily Summary` e cron `kwikledgers-day-end-closure` ainda legados. Nenhum produto foi alterado.
 - [ ] Obter aprovação explícita do usuário antes de alterar qualquer superfície protegida.
 - [ ] Desativar apenas consumidores autorizados e registrar a validação pós-retirada.
 
 A troca de backend não equivale ao desligamento desses consumidores.
 Pendências operacionais são separadas das implementações técnicas locais.
+
+## Validação Operacional da Retomada de 2026-10-17
+
+Revisões executadas: LangGraph `5553911`, FastMCP `89e3399` e extensão
+`1894b0a`. Build, Extension Host real, Azure somente leitura, calendário,
+refresh e métricas passaram. Comandos, limites e inventário estão no
+[guia operacional](../docs/validation/fastmcp-langgraph-legacy-sunset.md).
+
+A prévia exata dos dois agendamentos foi apresentada; a aprovação não ficou
+disponível. Nenhum deles foi alterado. O registrador oficial de cron instala
+a configuração imediatamente, portanto não foi executado como se fosse ajuda
+ou prévia. O comando nativo proposto para o resumo diário passou separadamente.
+
+O host registrou `2026-10-19`, enquanto a solicitação informa `2026-10-17`.
+Não houve ajuste do relógio, antecipação de gatilhos nem inferência de horas
+de trabalho a partir dessa divergência. A observação de uma execução agendada
+continua pendente.
 
 ## Critérios de Conclusão
 
