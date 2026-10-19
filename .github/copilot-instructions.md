@@ -4,12 +4,12 @@ Este repositório existe para evoluir o runtime LangGraph da KwikLedgers como um
 projeto Python standalone.
 
 Regras principais:
-- preserve o runtime legado fora deste repositório; integrações com o legado devem entrar apenas por adapters
+- integrações devem entrar apenas por adapters; o backend `legacy` foi removido
 - prefira mudanças pequenas e validadas por `poetry run python -m unittest discover -s tests`
 - trate guardrails, observabilidade e approval gates como responsabilidades de primeira classe do runtime
 - para fluxos mutáveis de Azure, preserve o padrão preview-first e bloqueie a execução sem aprovação explícita no estado
 - para fluxos mutáveis, considere aprovação válida apenas quando ela vier depois do preview, por confirmação humana separada e vinculada à ação atual; o agente não deve pré-preencher `pending_approval.approved = true` para execução real
-- mantenha o código compatível com Python 3.10+
+- utilize somente Python 3.12 ou superior para implementação, ambientes e testes
 - documente qualquer mudança estrutural relevante no `README.md` e em `../docs/history/kwikledgers-alteration-YYYY-MM-DD.md` enquanto este diretório ainda viver dentro do workspace monorepo
 
 Comandos que devem ser priorizados pelo agente:
@@ -19,11 +19,11 @@ Comandos que devem ser priorizados pelo agente:
 - validar CLI de PR: `poetry run kwikledgers-langgraph-story-pr --help`
 
 Mapa curto do projeto:
-- `src/kwikledgers_langgraph/adapters.py`: portas e contratos de integração
-- `src/kwikledgers_langgraph/legacy_adapters.py`: ponte opcional para o runtime legado
-- `src/kwikledgers_langgraph/guardrails.py`: classificação de operações e aprovação explícita
-- `src/kwikledgers_langgraph/observability.py`: `correlation_id`, `active_run_id` e timeline
-- `src/kwikledgers_langgraph/graphs/`: fluxos LangGraph
+- `kwikledgers_langgraph/adapters.py`: portas e contratos de integração
+- `kwikledgers_langgraph/fastmcp_adapters.py`: adapters das capabilities nativas do FastMCP
+- `kwikledgers_langgraph/guardrails.py`: classificação de operações e aprovação explícita
+- `kwikledgers_langgraph/observability.py`: `correlation_id`, `active_run_id` e timeline
+- `kwikledgers_langgraph/graphs/`: fluxos LangGraph
 - `tests/`: cobertura unitária com `unittest`, sem `pytest`
 
 Convenções do runtime:
@@ -32,13 +32,12 @@ Convenções do runtime:
 - fluxos mutáveis devem seguir o desenho `validate -> preview -> gate -> execute/stop`
 - preview é leitura; create/update é mutação e precisa de `pending_approval`
 - `pending_approval` é o gate canônico do repositório para mutações; em uso real ele deve refletir aprovação humana posterior ao preview, não uma aprovação sintetizada pelo próprio agente no mesmo run
-- não chame diretamente o legado a partir dos grafos; a integração deve passar pelos ports e adapters
-- se o fluxo depender do workspace legado, use `KWIKLEDGERS_MCP_SERVERS_PATH` ou `KWIKLEDGERS_LEGACY_ROOT`; não hardcode paths do monorepo
+- não chame integrações diretamente a partir dos grafos; a integração deve passar pelos ports e adapters
 
 Pipeline canônico para um fluxo novo:
 - `state.py`: contrato opcional do request, preview, aprovação e resultado
 - `adapters.py`: porta e dataclass de portas
-- `legacy_adapters.py`: bridge opcional para o runtime legado
+- `fastmcp_adapters.py`: adapters das capabilities nativas do FastMCP
 - `graphs/`: `validate -> preview -> gate -> execute/stop`
 - `runtime.py` e CLI dedicada: exposição explícita do fluxo
 - `tests/`: caminho sem aprovação, caminho com aprovação e parada limpa após preview

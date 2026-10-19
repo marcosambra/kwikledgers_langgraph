@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 
 from kwikledgers_langgraph.guardrails import (
     ApprovalRequiredError,
@@ -10,11 +11,34 @@ from kwikledgers_langgraph.guardrails import (
     build_bound_approval,
     evaluate_operation,
     require_explicit_approval,
+    load_resume_confirmation,
+    verify_execution_approval,
 )
 from kwikledgers_langgraph.observability import build_observability_context
 
 
 class GuardrailsTestCase(unittest.TestCase):
+    def test_explicit_resume_is_bound_and_reverified_before_execution(self) -> None:
+        state = {"observability": {"active_run_id": "run", "backend_name": "fastmcp"}}
+        pending = build_bound_approval(state, action="update", preview={"id": 1},
+                                       approved=False, approval_source="test")
+        state["pending_approval"] = pending
+        confirmation = load_resume_confirmation(
+            state, backend_name="fastmcp", receipt_file=None, resume_state_file="state.json",
+            approval_request_id=pending["request_id"], approval_source="human-test",
+        )
+        approved = evaluate_operation(
+            {**state, "approval_resume_ready": True, "approval_confirmation": confirmation},
+            action="update", operation_kind=OperationKind.AZURE_MUTATION, preview={"id": 1},
+        )["pending_approval"]
+        self.assertIs(approved["approved"], True)
+        self.assertTrue(verify_execution_approval(approved, approved["confirmation"]))
+        for field, value in (("preview", {"id": 2}), ("run_id", "other"), ("request_id", "other")):
+            changed = deepcopy(approved)
+            changed[field] = value
+            self.assertFalse(verify_execution_approval(changed, confirmation))
+        self.assertFalse(verify_execution_approval({**approved, "receipt": {}}, confirmation))
+
     def test_read_only_operation_is_auto_approved_without_pending_approval(self) -> None:
         state = {
             "observability": build_observability_context(
@@ -102,42 +126,6 @@ class GuardrailsTestCase(unittest.TestCase):
             result["tracking_events"][-1]["payload"]["reason"],
             "explicit_approval_required",
         )
-
-    def test_confirmation_for_same_request_allows_mutation(self) -> None:
-        state = {
-            "observability": build_observability_context(
-                flow_name="story_pull_request",
-                source="test",
-            ),
-            "approval_resume_ready": True,
-        }
-        preview = {"title": "Draft PR"}
-        state["pending_approval"] = build_bound_approval(
-            state,
-            action="story_pull_request.create",
-            preview=preview,
-            approved=False,
-            approval_source="pending_review",
-        )
-        state["approval_confirmation"] = build_approval_confirmation(
-            request_id=state["pending_approval"]["request_id"],
-            approved=True,
-            approval_source="test",
-        )
-
-        result = evaluate_operation(
-            state,
-            action="story_pull_request.create",
-            operation_kind=OperationKind.AZURE_MUTATION,
-            preview=preview,
-        )
-
-        self.assertTrue(result["pending_approval"]["approved"])
-        self.assertEqual(
-            result["tracking_events"][-1]["payload"]["reason"],
-            "approved_by_state",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,8 @@ Mutable flows will separate approval request emission from approval confirmation
 For the story PR flow, replayed preview context is expressed by rerunning the flow
 with the prior preview payload still present in state, so the preview step can prove
 that the current preview is the same one that was previously shown.
+The public CLI surface must therefore persist the full post-preview state and reuse
+that same state during resume instead of rebuilding a fresh observability context.
 
 ## Options Considered
 

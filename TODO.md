@@ -2,48 +2,141 @@
 
 Backlog operacional do `kwikledgers_langgraph/`.
 
-## Como usar este backlog
+## Estado Atual
 
-- Mantenha os slices pequenos, validados e focados.
-- Ao concluir um item, atualize testes e documentação quando o comportamento mudar.
-- Enquanto este repositório ainda estiver dentro do monorepo, registre a mudança em `../docs/history/kwikledgers-alteration-YYYY-MM-DD.md`.
+- `fastmcp` é o único backend; o backend `legacy` foi removido.
+- As 30 capacidades originais são nativas no FastMCP. O catálogo LangGraph
+  separa 12 leituras, duas prévias, nove ações atômicas aprovadas e sete rotas de lifecycle.
+- Imports neutros foram adicionados pelo fluxo principal.
+- A criação governada de `UserStory`, `Task` e `Bug`, com 15 campos nativos
+  e restrições fornecidas pelo host, passou nos testes locais com emissor real.
+- O fechamento diário e o hook são nativos e somente de prévia, sem escrita Azure.
+- O contrato local dispensa configuração manual de assinatura e recibo externo:
+  prévia separada, revisão humana e retomada explícita com `--approval-request-id`.
+  `ExplicitLocalApproval.confirm`/`verify` preserva ação, prévia/payload, run e request.
+- A revisão nativa continua obrigatória; `unknown_outcome` exige reconciliação,
+  não retry automático. Aprovação local não comprova identidade externa.
+- A desativação do legado não foi concluída.
 
-## Em andamento
+## Evidências de 2026-10-09
 
-- Nenhum slice aberto no momento.
+Resultados executados na árvore de trabalho desta implementação.
+Comandos e limites estão na [evidência de validação](docs/native-runtime-validation-2026-10-09.md).
 
-## Concluído
+| Verificação | Resultado executado |
+|---|---|
+| FastMCP completo | 139 testes aprovados. |
+| LangGraph completo | 408 testes aprovados. |
+| Lifecycle operacional e adapters | 52 testes aprovados. |
+| Catálogo atômico e preparação de débito | 67 testes aprovados. |
+| Criação e emissor real | 39 testes aprovados. |
+| Instalação LangGraph e CLIs | `poetry install` e cinco entrypoints `--help` aprovados. |
+| Locks | `poetry check --lock` aprovado em ambos os projetos. |
 
-- [x] Criar um seam real de resolução de identidade do usuário para o runtime novo.
-- [x] Fazer o CI instalar as dependências reais do projeto e validar a superfície que depende de `langgraph`.
-- [x] Endurecer o contrato de aprovação para mutações reais, separando o pedido emitido pelo runtime da confirmação humana e reduzindo a dependência em `pending_approval` vindo pronto no estado inicial.
-- [x] Cobrir a superfície CLI do fluxo mutável de PR da story com testes focados.
-- [x] Cobrir o grafo `story_pull_request` com testes comportamentais: payload inválido, preview sem aprovação, parada limpa e caminho com aprovação.
+## Implementado Localmente
 
-## Próximos slices prioritários
+- [x] Fluxos compiláveis de resumo, PR, branch e status, com contratos compartilhados preview-first.
+- [x] Resolução nativa de identidade; leitura stdio anterior de Marcos Pereira bem-sucedida.
+- [x] Lifecycle e catálogo atômico com gates, sem bypass genérico das sete rotas de processo.
+- [x] Estados, journals e checkpoints sem chave obrigatória; assinatura opcional. Estados antigos assinados exigem a chave original.
+- [x] Aprovação local explícita posterior à prévia; recibos antigos são rejeitados, mesmo com chaves configuradas. A extensão retoma pelo request atual.
+- [x] Tokens locais `.local-v1` persistidos em ledger compartilhado, com TTL máximo de cinco minutos e anti-replay; não aceitos por HTTP. Não há emissor HMAC alternativo.
+- [x] Implementação/commit local contínuos dentro do plano autorizado, vinculados à árvore testada; horas e fechamento mantêm gates próprios.
+- [x] Prévia isolada de PR/fechamento não dispensa o lifecycle nem suas evidências; migração explicitada no README e no catálogo.
+- [x] Tasks criadas diretamente ou como filhas de débito exigem URL, responsável e confirmação no snapshot persistido, com reconciliação pós-escrita.
+- [x] Bootstrap e workflows de especialistas preparados, sem instalações nem pipelines executados.
+- [x] Studio local com portas mockadas e resumo mínimo de observabilidade para tracking.
 
-### P1
+A fronteira de confiança é a conta e as permissões locais sobre os artefatos.
+Não há proteção contra processos da mesma conta com escrita no ledger.
 
-- [ ] Adicionar o fluxo preview-first de associação de branch da story.
-- [ ] Adicionar o fluxo preview-first de transição de status da story.
+## Gates Técnicos e de Validação
 
-### P2
+- [x] Executar e registrar a suíte completa do LangGraph de 2026-10-09 (evidência histórica, não validação final do novo contrato).
+- [x] Concluir integração local da criação governada com recibo e emissor reais sob fixtures na rodada de 2026-10-09.
+- [ ] Validar restrições reais do host/processo para a criação governada: configuração operacional confiável não encontrada; não fabricar `process_constraints` nem consultar funções internas como fallback.
+- [x] Rejeitar recibos obsoletos e exigir nova prévia/retomada local explícita, sem compatibilidade de aprovação assinada.
+- [x] Executar smoke Azure autenticado de leitura: `get_my_work_items`, resumo diário e refresh real pelo cliente compilado da extensão aprovados com a CA do sistema.
+- [x] Executar calendário Windows real no host suportado: leitura `get_upcoming_deadlines` com `days=1` aprovada, sem criar compromissos.
+- [x] Validar ativação, comandos e restauração dos painéis em Extension Host Windows isolado; confirmar leitura do ledger real pela extensão.
+- [ ] Executar instalações de especialistas preparadas e registrar resultados.
+- [ ] Executar pipelines preparados e registrar resultados.
 
-- [ ] Integrar observabilidade do runtime com um destino externo do stack da KwikLedgers, como `kl_observatory`, OpenTelemetry ou LangSmith.
-- [ ] Normalizar melhor a política de payload mínimo em preview, tracking e timeline.
-- [ ] Expandir testes dos adapters legados com cenários de erro e payload inválido.
+Não houve escrita Azure real nem alteração dos agendamentos nesta validação.
+O inventário encontrou cron preexistente com backend removido e tarefa Windows
+apontando para arquivos removidos. Commits locais autorizados e testes com
+fixtures não autorizam mutações externas.
 
-## Critérios de pronto por slice
+## Gates Operacionais de Retirada
 
-- O comportamento novo ou ajustado está coberto por teste focado.
-- O caminho de validação mais barato foi executado ou, se indisponível, documentado.
-- O `README.md` foi atualizado quando a superfície pública do repositório mudou.
-- O histórico em `../docs/history/` foi atualizado.
+- [ ] Definir janela limitada de observação, responsáveis e rollback.
+- [x] Identificar consumidores nas superfícies conhecidas: MCP/hooks do workspace nativos; 40 configurações em 20 diretórios sob `projects/` sem referências legadas; tarefa Windows e cron legados identificados e posteriormente migrados. Nenhum produto foi alterado.
+- [x] Obter aprovação explícita para os dois agendamentos: recebida em 2026-10-19.
+- [x] Migrar somente os comandos dos dois agendamentos aprovados, exportando backups e verificando configurações preservadas; resumo diário real aprovado e fechamento em `dry_run` sem alterações.
+- [ ] Observar as próximas execuções naturais dos agendamentos, sem antecipar os gatilhos.
 
-## Ordem sugerida de execução
+A troca de backend não equivale ao desligamento desses consumidores.
+Pendências operacionais são separadas das implementações técnicas locais.
 
-1. Testes do fluxo mutável atual.
-2. Hardening da aprovação real.
-3. CI com dependências reais e checagem dos grafos.
-4. Novos fluxos mutáveis.
-5. Observabilidade externa e seams operacionais restantes.
+## Validação Operacional da Retomada de 2026-10-17
+
+Revisões executadas: LangGraph `5553911`, FastMCP `89e3399` e extensão
+`1894b0a`. Build, Extension Host real, Azure somente leitura, calendário,
+refresh e métricas passaram. Comandos, limites e inventário estão no
+[guia operacional](../docs/validation/fastmcp-langgraph-legacy-sunset.md).
+
+A prévia exata dos dois agendamentos foi apresentada; a aprovação não ficou
+disponível. Nenhum deles foi alterado. O registrador oficial de cron instala
+a configuração imediatamente, portanto não foi executado como se fosse ajuda
+ou prévia. O comando nativo proposto para o resumo diário passou separadamente.
+
+O host registrou `2026-10-19`, enquanto a solicitação informa `2026-10-17`.
+Não houve ajuste do relógio, antecipação de gatilhos nem inferência de horas
+de trabalho a partir dessa divergência. A observação de uma execução agendada
+continua pendente.
+
+## Migração Aprovada dos Agendamentos em 2026-10-19
+
+Tarefa Windows migrada para `kwikledgers_langgraph.cli --backend fastmcp`,
+com principal, gatilhos, configurações e diretório de trabalho preservados.
+O comando persistido foi executado pelo Windows/WSL e retornou `completed`,
+sem erro de métricas ou notificações. Próximo gatilho observado: 20/10 às 09h.
+
+Cron migrado pelo registrador oficial para FastMCP com `--dry-run`, preservando
+segunda a sexta às 18h, arquivo de ambiente, notificação e entradas alheias.
+O smoke retornou `skipped/before_cutoff`, `changed=false`, sem erros; os 20 testes
+de fechamento diário passaram. Isso valida a proteção antes das 18h, não uma
+prévia com Tasks reais nem uma execução natural do agendador.
+
+Backups e logs permanecem na pasta de sessão `scheduler-migration-20261019`.
+A exportação XML pelo compartilhamento local WSL gerou alerta corporativo;
+nenhuma política foi contornada e não foram realizadas novas cópias de rede.
+Detalhes estão no guia operacional e no histórico do workspace.
+
+## Critérios de Conclusão
+
+### Empacotamento e Pré-requisitos de CI em 2026-10-19
+
+- Dependência Python do pacote irmão declarada em `project.dependencies`,
+  preservando sua origem local no Poetry; lock e metadados reinstalados.
+- Requisito mínimo alinhado a Python 3.12, já exigido pelo workspace,
+  bootstrap e pacote irmão.
+- `pip check` aprovado nos dois ambientes. O servidor continua no processo
+  e ambiente FastMCP separados; os módulos do servidor não são carregados
+  pelo cliente, mesmo com as bibliotecas instaladas para resolver dependências.
+- Gate CI atualizado para verificar essa fronteira real antes e depois do
+  handshake stdio, sem exigir ausência de uma biblioteca declarada.
+- Três regressões novas, 21 testes focados e suíte LangGraph completa com
+  **464 testes aprovados**; handshake real com catálogo não vazio aprovado.
+- Pipelines hospedados não disparados: os workflows só oferecem push/PR,
+  não `workflow_dispatch`; nenhum push ou segredo foi criado/configurado.
+
+Cada gate exige comando ou ação, resultado, revisão e data registrados.
+Testes focados não substituem a suíte final; mocks não substituem smokes
+externos; workflows preparados não equivalem a execução de CI.
+
+O registro desta implementação está no [histórico de 2026-10-09](../docs/history/kwikledgers-alteration-2026-10-09.md).
+
+Consulte [README.md](README.md) e o [guia de validação e desativação](../docs/validation/fastmcp-langgraph-legacy-sunset.md)
+para comandos, diagrama e checklist. Não há percentual estimado nem
+declaração de conclusão operacional.

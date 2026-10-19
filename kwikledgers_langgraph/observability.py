@@ -1,0 +1,449 @@
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from kwikledgers_langgraph.state import AgentState, merge_observability
+
+
+_SENSITIVE_PAYLOAD_KEY_PARTS = (
+    "authorization",
+    "body",
+    "description",
+    "email",
+    "html",
+    "markdown",
+    "message",
+    "password",
+    "pat",
+    "secret",
+    "token",
+    "uri",
+    "url",
+)
+_MAX_EXTERNAL_STRING_LENGTH = 240
+_MAX_EXTERNAL_COLLECTION_ITEMS = 20
+
+
+def build_observability_context(*, flow_name: str, source: str, backend_name: str | None = None) -> dict[str, Any]:
+    correlation_id = str(uuid.uuid4())
+    active_run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+    context = {
+        "correlation_id": correlation_id,
+        "active_run_id": active_run_id,
+        "flow_name": flow_name,
+        "source": source,
+        "started_at": started_at,
+        "request_id": os.environ.get("KWIKLEDGERS_REQUEST_ID", ""),
+        "session_id": os.environ.get("KWIKLEDGERS_SESSION_ID", ""),
+        "workspace_id": os.environ.get("KWIKLEDGERS_WORKSPACE_ID", ""),
+        "decisions": [],
+        "timeline": [
+            {
+                "node": flow_name,
+                "status": "initialized",
+                "message": "Fluxo preparado para execução.",
+                "payload": {"source": source},
+                "at": started_at,
+            }
+        ],
+    }
+    if backend_name:
+        context["backend_name"] = backend_name
+        context["timeline"][0]["payload"]["backend_name"] = backend_name
+    return context
+
+
+def _sanitize_external_text(value: Any) -> str:
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) <= _MAX_EXTERNAL_STRING_LENGTH:
+        return text
+    return text[: _MAX_EXTERNAL_STRING_LENGTH - 3] + "..."
+
+
+def _is_sensitive_payload_key(key: str) -> bool:
+    normalized = key.strip().lower()
+    return any(part in normalized for part in _SENSITIVE_PAYLOAD_KEY_PARTS)
+
+
+def sanitize_external_payload(value: Any, *, depth: int = 0) -> Any:
+    if depth > 4:
+        return "[truncated]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _sanitize_external_text(value)
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for index, (key, nested_value) in enumerate(value.items()):
+            if index >= _MAX_EXTERNAL_COLLECTION_ITEMS:
+                sanitized["truncated_items"] = len(value) - _MAX_EXTERNAL_COLLECTION_ITEMS
+                break
+            normalized_key = str(key)
+            if _is_sensitive_payload_key(normalized_key):
+                sanitized[normalized_key] = "[redacted]"
+                continue
+            sanitized[normalized_key] = sanitize_external_payload(nested_value, depth=depth + 1)
+        return sanitized
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        sanitized_items = [
+            sanitize_external_payload(item, depth=depth + 1)
+            for item in items[:_MAX_EXTERNAL_COLLECTION_ITEMS]
+        ]
+        if len(items) > _MAX_EXTERNAL_COLLECTION_ITEMS:
+            sanitized_items.append({"truncated_items": len(items) - _MAX_EXTERNAL_COLLECTION_ITEMS})
+        return sanitized_items
+    return _sanitize_external_text(value)
+
+
+def record_runtime_event(
+    state: AgentState,
+    *,
+    node: str,
+    status: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    observability = dict(state.get("observability", {}))
+    decisions = list(observability.get("decisions", []))
+    timeline = list(observability.get("timeline", []))
+    at = datetime.now(timezone.utc)
+    observability.setdefault("started_at", at.isoformat())
+    observability.setdefault("request_id", os.environ.get("KWIKLEDGERS_REQUEST_ID", ""))
+    previous_at = timeline[-1].get("at") if timeline else None
+    elapsed_ms = None
+    if previous_at:
+        elapsed_ms = (at - datetime.fromisoformat(previous_at)).total_seconds() * 1000
+        if elapsed_ms < 0:
+            raise ValueError("Relógio retrocedeu durante o fluxo; duração não é confiável.")
+    timeline.append(
+        {
+            "node": node,
+            "status": status,
+            "message": message,
+            "payload": payload or {},
+            "at": at.isoformat(),
+            "duration_ms": elapsed_ms,
+        }
+    )
+    decisions.append(f"runtime.{node}.{status}")
+    observability["decisions"] = decisions
+    observability["timeline"] = timeline
+    return merge_observability(state, observability)
+
+
+def build_runtime_usage_metrics_entry(state: AgentState) -> dict[str, Any]:
+    observability = dict(state.get("observability", {}))
+    timeline = list(observability.get("timeline", []))
+    decisions = list(observability.get("decisions", []))
+    tracking_events = list(state.get("tracking_events", []))
+    errors = list(state.get("errors", []))
+
+    final_event = dict(timeline[-1]) if timeline else {}
+    flow_name = str(observability.get("flow_name") or "unknown_flow")
+    final_status = str(final_event.get("status") or "completed")
+    title = f"runtime:{flow_name}:{final_status}"
+    summary = _sanitize_external_text(
+        final_event.get("message") or f"Fluxo {flow_name} finalizado com status {final_status}."
+    )
+
+    actions = [
+        f"source={state.get('source') or observability.get('source') or 'unknown'}",
+        f"backend={observability.get('backend_name') or 'unknown'}",
+        f"run_id={observability.get('active_run_id') or 'unknown'}",
+        f"correlation_id={observability.get('correlation_id') or 'unknown'}",
+    ]
+    for event in timeline[-5:]:
+        actions.append(f"node={event.get('node')} status={event.get('status')}")
+    for decision in decisions[-5:]:
+        actions.append(f"decision={decision}")
+    for tracking_event in tracking_events[-3:]:
+        actions.append(
+            f"tracking={tracking_event.get('category')}:{_sanitize_external_text(tracking_event.get('message') or '')}"
+        )
+    for error in errors[:3]:
+        actions.append(f"error={_sanitize_external_text(error)}")
+
+    return {
+        "title": title,
+        "summary": summary,
+        "remaining_story_points": 0,
+        "blocked_items": len(errors),
+        "actions": actions,
+    }
+
+
+def build_runtime_event_stream_records(state: AgentState) -> list[dict[str, Any]]:
+    observability = dict(state.get("observability", {}))
+    timeline = list(observability.get("timeline", []))
+    decisions = list(observability.get("decisions", []))
+    tracking_events = list(state.get("tracking_events", []))
+    errors = list(state.get("errors", []))
+    summary = dict(state.get("summary", {}))
+    counts = dict(summary.get("counts", {}))
+    final_event = dict(timeline[-1]) if timeline else {}
+
+    common = {
+        "runtime": "kwikledgers_langgraph",
+        "flow_name": str(observability.get("flow_name") or "unknown_flow"),
+        "source": str(state.get("source") or observability.get("source") or "unknown"),
+        "backend_name": str(observability.get("backend_name") or "unknown"),
+        "correlation_id": str(observability.get("correlation_id") or "unknown"),
+        "active_run_id": str(observability.get("active_run_id") or "unknown"),
+    }
+
+    records: list[dict[str, Any]] = [
+        {
+            **common,
+            "record_type": "run_summary",
+            "final_node": final_event.get("node"),
+            "final_status": final_event.get("status") or "completed",
+            "message": final_event.get("message") or "",
+            "counts": counts,
+            "timeline_event_count": len(timeline),
+            "decision_count": len(decisions),
+            "tracking_event_count": len(tracking_events),
+            "error_count": len(errors),
+        }
+    ]
+
+    for event_index, event in enumerate(timeline):
+        records.append(
+            {
+                **common,
+                "record_type": "timeline_event",
+                "event_index": event_index,
+                "node": event.get("node"),
+                "status": event.get("status"),
+                "message": _sanitize_external_text(event.get("message") or ""),
+                "payload": sanitize_external_payload(dict(event.get("payload", {}))),
+                "observed_at": event.get("at"),
+                "duration_ms": event.get("duration_ms"),
+            }
+        )
+
+    for decision_index, decision in enumerate(decisions):
+        records.append(
+            {
+                **common,
+                "record_type": "decision",
+                "decision_index": decision_index,
+                "decision": decision,
+            }
+        )
+
+    for tracking_index, tracking_event in enumerate(tracking_events):
+        records.append(
+            {
+                **common,
+                "record_type": "tracking_event",
+                "tracking_index": tracking_index,
+                "category": tracking_event.get("category"),
+                "message": _sanitize_external_text(tracking_event.get("message") or ""),
+                "payload": sanitize_external_payload(dict(tracking_event.get("payload", {}))),
+            }
+        )
+
+    for error_index, error in enumerate(errors):
+        records.append(
+            {
+                **common,
+                "record_type": "error",
+                "error_index": error_index,
+                "message": _sanitize_external_text(error),
+            }
+        )
+
+    return records
+
+
+def resolve_ai_tracking_root(explicit_root: str | Path | None = None) -> Path:
+    if explicit_root is not None:
+        candidate = Path(explicit_root).expanduser().resolve()
+        if candidate.is_dir():
+            return candidate
+        raise RuntimeError("O tracking root informado para observabilidade nao existe.")
+
+    explicit_env_root = os.environ.get("KWIKLEDGERS_AI_TRACKING_ROOT")
+    if not explicit_env_root and os.environ.get("KWIKLEDGERS_ROOT_DIR"):
+        explicit_env_root = str(Path(os.environ["KWIKLEDGERS_ROOT_DIR"]).expanduser() / "AI_Tracking")
+    if explicit_env_root:
+        candidate = Path(explicit_env_root).expanduser().resolve()
+        if candidate.is_dir():
+            return candidate
+        raise RuntimeError("A variavel KWIKLEDGERS_AI_TRACKING_ROOT nao aponta para um diretorio valido.")
+
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "AI_Tracking"
+        if candidate.is_dir():
+            return candidate
+
+    raise RuntimeError("Nao foi possivel localizar o diretorio AI_Tracking para observabilidade externa.")
+
+
+def append_runtime_usage_metrics(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
+    root = resolve_ai_tracking_root(tracking_root)
+    metrics_dir = root / "Metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = metrics_dir / "ai-usage-log.md"
+    if not metrics_path.exists():
+        metrics_path.write_text(
+            "# AI Usage Metrics Log\n\n"
+            "Registro operacional das interacoes com IA relacionadas ao sprint atual.\n\n",
+            encoding="utf-8",
+        )
+
+    entry = build_runtime_usage_metrics_entry(state)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    lines = [
+        f"## {timestamp} - {entry['title']}",
+        "",
+        f"Resumo: {entry['summary']}",
+        f"Story points restantes: {entry['remaining_story_points']}",
+        f"Itens bloqueados: {entry['blocked_items']}",
+        "Acoes executadas:",
+    ]
+    for action in entry["actions"]:
+        lines.append(f"- {action}")
+    lines.append("")
+
+    with metrics_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+    return metrics_path
+
+
+def append_runtime_event_stream(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
+    root = resolve_ai_tracking_root(tracking_root)
+    metrics_dir = root / "Metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    events_path = metrics_dir / "langgraph-runtime-events.jsonl"
+    emitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with events_path.open("a", encoding="utf-8") as handle:
+        for record in build_runtime_event_stream_records(state):
+            handle.write(json.dumps({"emitted_at": emitted_at, **record}, ensure_ascii=False) + "\n")
+
+    return events_path
+
+
+def append_runtime_observability_artifacts(
+    state: AgentState,
+    *,
+    tracking_root: str | Path | None = None,
+) -> dict[str, Path]:
+    usage_metrics_path = append_runtime_usage_metrics(state, tracking_root=tracking_root)
+    event_stream_path = append_runtime_event_stream(state, tracking_root=tracking_root)
+    request_events_path = append_request_metrics(state, tracking_root=tracking_root)
+    return {
+        "usage_metrics_path": usage_metrics_path,
+        "event_stream_path": event_stream_path,
+        "request_events_path": request_events_path,
+    }
+
+
+def workflow_completion(state: Mapping[str, Any], *, outcome: str | None = None) -> dict[str, Any]:
+    results = state.get("results", {})
+    creation = results.get("work_item_creation", results.get("debt_parent", {}))
+    snapshots = [value for key, value in results.items()
+                 if key == "confirm_snapshot" or key.endswith("_snapshot")]
+    pending = state.get("pending_approval", {})
+    execution = outcome or state.get("outcome")
+    if execution is None:
+        for key in ("pull_request_result", "task_closure_result", "story_status_result",
+                    "branch_association_result", "day_end_closure_result"):
+            if state.get(key, {}).get("status"):
+                execution = state[key]["status"]
+                break
+    approval_pending = bool(pending) and pending.get("approved") is not True
+    if execution == "running" and approval_pending:
+        execution = "waiting"
+    return {"approval": "pending" if approval_pending else "not_pending",
+            "execution": execution,
+            "work_item_persisted": bool(creation.get("id", creation.get("work_item_id"))) if creation else None,
+            "snapshot": ("confirmed" if snapshots and
+                         all(item.get("snapshot_confirmed") is True for item in snapshots) and
+                         execution != "reconciliation_required" else "not_checked")}
+
+
+def append_request_metrics(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
+    from kwikledgers_fastmcp.domains.local_tracking.request_metrics import RequestMetricsService
+
+    root = resolve_ai_tracking_root(tracking_root)
+    service = RequestMetricsService(tracking_root=root)
+    context = state.get("observability", {})
+    timeline = context.get("timeline", [])
+    run_id = context.get("active_run_id") or str(uuid.uuid4())
+    parent_request = os.environ.get("KWIKLEDGERS_REQUEST_ID") or context.get("request_id")
+    owns_request = not parent_request or context.get("owns_request") is True
+    request_id = parent_request or f"graph-{run_id}"
+    flow_name = context.get("flow_name", "unknown_flow")
+    common: dict[str, Any] = {"flow_name": flow_name, "run_id": run_id}
+    session_id = context.get("session_id", "")
+    if owns_request:
+        service.append_event(
+            request_id=request_id, session_id=session_id, source="langgraph", kind="request_started",
+            label=f"Grafo: {flow_name}", status="running",
+            details={**common, "observed_at": context.get("started_at", ""),
+                     "measurement": "elapsed_wall_time"},
+        )
+    for event in timeline:
+        raw_status = event.get("status", "")
+        status = (
+            "failed" if raw_status in {"failed", "error"}
+            else "blocked" if raw_status in {"blocked", "awaiting_approval", "waiting_approval"}
+            else "running" if raw_status in {"initialized", "running", "started"}
+            else "completed"
+        )
+        service.append_event(
+            request_id=request_id, session_id=session_id, source="langgraph", kind="step",
+            label=f"{flow_name}: {event.get('node', 'unknown')} ({raw_status})",
+            status=status, duration_ms=event.get("duration_ms"),
+            details={**common, "node": event.get("node", ""),
+                     "observed_at": event.get("at", ""),
+                     "measurement": "interval_since_previous_event"},
+        )
+    completion = workflow_completion(state)
+    outcome = completion["execution"]
+    if outcome:
+        service.append_event(
+            request_id=request_id, session_id=session_id, source="langgraph", kind="step",
+            label=f"Resultado do workflow: {flow_name}",
+            status="failed" if outcome in {"reconciliation_required", "failed", "execute_failed", "preview_failed"} else
+                   "blocked" if outcome in {"blocked", "denied", "waiting", "running",
+                                            "approval_required", "approved", "lifecycle_required"} else "completed",
+            details={**common, "node": "workflow_result", "outcome": outcome,
+                     "reason": "snapshot_confirmed" if completion["snapshot"] == "confirmed" else "snapshot_not_checked",
+                     "measurement": "duration_unavailable"},
+        )
+    if owns_request:
+        duration_ms = None
+        start = context.get("started_at")
+        end = timeline[-1].get("at") if timeline else None
+        if start and end:
+            duration_ms = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000
+            if duration_ms < 0:
+                raise ValueError("Duração do grafo inválida.")
+        final_status = "failed" if state.get("errors") or outcome in {"failed", "reconciliation_required"} else "completed"
+        if any(event.get("status") in {"failed", "error"} for event in timeline[-1:]):
+            final_status = "failed"
+        if outcome in {"blocked", "denied", "waiting", "running", "approval_required",
+                       "approved", "lifecycle_required"} or any(
+            event.get("status") in {"blocked", "awaiting_approval", "waiting_approval"} for event in timeline[-1:]
+        ):
+            final_status = "blocked"
+        service.append_event(
+            request_id=request_id, session_id=session_id, source="langgraph", kind="request_finished",
+            label=f"Grafo encerrado: {flow_name}", status=final_status,
+            duration_ms=duration_ms,
+            details={**common, "measurement": "elapsed_wall_time"},
+        )
+    return root / "Metrics" / "request-events.jsonl"

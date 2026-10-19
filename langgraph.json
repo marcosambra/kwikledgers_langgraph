@@ -1,0 +1,9 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "daily_summary": "./kwikledgers_langgraph/dev_studio.py:daily_summary_graph",
+    "story_pull_request": "./kwikledgers_langgraph/dev_studio.py:story_pull_request_graph",
+    "story_branch_association": "./kwikledgers_langgraph/dev_studio.py:story_branch_association_graph",
+    "story_status_transition": "./kwikledgers_langgraph/dev_studio.py:story_status_transition_graph"
+  }
+}
