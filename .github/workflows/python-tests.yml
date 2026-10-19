@@ -131,7 +131,6 @@ jobs:
           poetry run python - <<'PY'
           import asyncio
           import sys
-          from importlib.util import find_spec
           from pathlib import Path
 
           from mcp import ClientSession, StdioServerParameters
@@ -143,13 +142,16 @@ jobs:
               assert config.transport == "stdio"
               assert Path(config.command).is_file(), config.command
               assert Path(config.command).parent != Path(sys.executable).parent
-              assert find_spec("fastmcp") is None
+              assert "fastmcp" not in sys.modules
+              assert "kwikledgers_fastmcp.server" not in sys.modules
               parameters = StdioServerParameters(command=config.command, args=list(config.args))
               async with stdio_client(parameters) as (read_stream, write_stream):
                   async with ClientSession(read_stream, write_stream) as session:
                       await session.initialize()
                       catalog = await session.list_tools()
                       assert catalog.tools, "FastMCP tool catalog is empty"
+                      assert "fastmcp" not in sys.modules
+                      assert "kwikledgers_fastmcp.server" not in sys.modules
                       print("stdio handshake and tool catalog validated")
 
           asyncio.run(asyncio.wait_for(check_transport(), timeout=30))

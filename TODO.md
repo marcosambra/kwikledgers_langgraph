@@ -115,6 +115,22 @@ Detalhes estão no guia operacional e no histórico do workspace.
 
 ## Critérios de Conclusão
 
+### Empacotamento e Pré-requisitos de CI em 2026-10-19
+
+- Dependência Python do pacote irmão declarada em `project.dependencies`,
+  preservando sua origem local no Poetry; lock e metadados reinstalados.
+- Requisito mínimo alinhado a Python 3.12, já exigido pelo workspace,
+  bootstrap e pacote irmão.
+- `pip check` aprovado nos dois ambientes. O servidor continua no processo
+  e ambiente FastMCP separados; os módulos do servidor não são carregados
+  pelo cliente, mesmo com as bibliotecas instaladas para resolver dependências.
+- Gate CI atualizado para verificar essa fronteira real antes e depois do
+  handshake stdio, sem exigir ausência de uma biblioteca declarada.
+- Três regressões novas, 21 testes focados e suíte LangGraph completa com
+  **464 testes aprovados**; handshake real com catálogo não vazio aprovado.
+- Pipelines hospedados não disparados: os workflows só oferecem push/PR,
+  não `workflow_dispatch`; nenhum push ou segredo foi criado/configurado.
+
 Cada gate exige comando ou ação, resultado, revisão e data registrados.
 Testes focados não substituem a suíte final; mocks não substituem smokes
 externos; workflows preparados não equivalem a execução de CI.

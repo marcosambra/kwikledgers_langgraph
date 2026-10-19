@@ -316,11 +316,19 @@ poetry run python -m unittest discover -s tests
 
 ## Interface visual (LangGraph Studio local)
 
-O projeto usa um único ambiente Poetry (Python 3.11+) que já inclui
+O projeto usa um único ambiente Poetry (Python 3.12+) que já inclui
 `langgraph-cli[inmem]` como dependência declarada em `pyproject.toml`. O
 Studio local sobe direto pelo mesmo `.venv` do projeto, sem venv separado,
 e usa apenas ports mockados (nunca os adapters reais) definidos em
 `kwikledgers_langgraph/dev_studio.py`.
+
+O pacote irmão `kwikledgers-fastmcp` é uma dependência Python declarada para
+os contratos de correlação, tracking e handoff compartilhados. A instalação
+resolve também suas dependências, sem iniciar nem importar seu servidor.
+O transporte stdio continua usando o Python do ambiente separado
+`kwikledgers_fastmcp/.venv`, ou o comando explicitamente configurado.
+A CI verifica processos separados e ausência dos módulos do servidor no
+cliente, não a ausência de bibliotecas instaladas exigidas pelo pacote.
 
 Passos:
 
