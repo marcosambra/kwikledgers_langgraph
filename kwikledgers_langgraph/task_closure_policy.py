@@ -13,6 +13,13 @@ def build_task_closure_preview(request: dict[str, Any], *, now: datetime | None 
     closure_allowed = elapsed_seconds >= 0
     computed_hours = math.ceil(elapsed_seconds / 3600) if closure_allowed else 0
     completed_work_hours = request.get("completed_work_hours")
+    messages = [] if closure_allowed else ["O horario de fechamento nao pode ser anterior ao horario de inicio."]
+    if str(request.get("work_kind") or "").strip().lower() == "fix":
+        origin = request.get("origin_task_id")
+        if origin is not None and int(origin) == task_id:
+            messages.append("Correcao de problema exige task propria; nao lance as horas na task de origem.")
+        if not str(request.get("fix_summary") or "").strip():
+            messages.append("Correcao de problema exige fix_summary descrevendo o problema corrigido.")
 
     return {
         "task_id": task_id,
@@ -24,8 +31,8 @@ def build_task_closure_preview(request: dict[str, Any], *, now: datetime | None 
         "remaining_work_hours": request.get("remaining_work_hours"),
         "target_status": "Closed",
         "comment": request.get("comment"),
-        "closure_allowed": closure_allowed,
-        "validation_messages": [] if closure_allowed else ["O horario de fechamento nao pode ser anterior ao horario de inicio."],
+        "closure_allowed": not messages,
+        "validation_messages": messages,
     }
 
 

@@ -22,3 +22,15 @@ class TaskClosurePolicyTestCase(unittest.TestCase):
         )
 
         self.assertFalse(preview["closure_allowed"])
+
+    def test_fix_requires_own_task_and_summary(self) -> None:
+        base = {"task_id": 10, "start_time": "2026-09-17T10:00:00+00:00", "work_kind": "fix"}
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=timezone.utc)
+
+        same = build_task_closure_preview({**base, "origin_task_id": 10, "fix_summary": "x"}, now=now)
+        missing = build_task_closure_preview({**base, "origin_task_id": 9}, now=now)
+        ok = build_task_closure_preview({**base, "origin_task_id": 9, "fix_summary": "x"}, now=now)
+
+        self.assertFalse(same["closure_allowed"])
+        self.assertFalse(missing["closure_allowed"])
+        self.assertTrue(ok["closure_allowed"])
