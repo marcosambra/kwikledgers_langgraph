@@ -105,6 +105,9 @@ def run_preview_step(
         capability_name = {
             "story_branch_association.preview": "associate_story_branch",
             "story_pull_request.preview": "create_story_pull_request",
+            "story_pr_launch.preview": "create_story_pull_request",
+            "story_pr_publish.preview": "publish_story_pull_request",
+            "story_pr_cherry_pick.preview": "cherry_pick_story_pull_request",
             "story_status_transition.preview": "update_story_status",
             "task_closure.preview": "update_work_item_effort",
         }.get(action)

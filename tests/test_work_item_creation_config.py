@@ -197,6 +197,21 @@ class WorkItemCreationConfigTests(TestCase):
         self.assertEqual(output.read_text(encoding="utf-8"), "Existing operator config")
         self.client.call.assert_not_called()
 
+    def test_cli_replace_overwrites_only_after_metadata_is_read(self):
+        output = Path(self.directory.name) / "operator.json"
+        output.write_text("Existing operator config", encoding="utf-8")
+        self.client.call.side_effect = RuntimeError("Metadata unavailable")
+        code, _, _, _ = self.invoke_cli(output, "--replace")
+        self.assertEqual(code, 1)
+        self.assertEqual(output.read_text(encoding="utf-8"), "Existing operator config")
+        self.client.reset_mock(side_effect=True)
+        self.client.call.side_effect = None
+        code, stdout, stderr, _ = self.invoke_cli(output, "--replace")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["outcome"], "prepared")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")),
+                         prepare_operator_configuration(self.metadata, self.repositories))
+
     def test_cli_rejects_duplicate_repositories_before_reading_metadata(self):
         code, _, stderr, _ = self.invoke_cli(Path(self.directory.name) / "operator.json",
                                             "--repository", "accountant_frontend=/another")

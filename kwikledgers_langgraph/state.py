@@ -40,6 +40,9 @@ class StoryPullRequestRequest(TypedDict, total=False):
     env_changes: str
     generated_migration_or_seed: str
     new_queue_or_command: str
+    repository_path: str
+    tests_evidence: str
+    evidence_files: list[str]
 
 
 class StoryBranchAssociationRequest(TypedDict, total=False):
@@ -129,6 +132,14 @@ class AgentState(TypedDict, total=False):
     pull_request_request: StoryPullRequestRequest
     pull_request_preview: dict[str, Any]
     pull_request_result: dict[str, Any]
+    pull_request_preflight: dict[str, Any]
+    publish_request: dict[str, Any]
+    publish_preview: dict[str, Any]
+    publish_result: dict[str, Any]
+    cherry_pick_request: dict[str, Any]
+    cherry_pick_preview: dict[str, Any]
+    cherry_pick_result: dict[str, Any]
+    cherry_pick_local: dict[str, Any]
     branch_association_request: StoryBranchAssociationRequest
     branch_association_preview: dict[str, Any]
     branch_association_result: dict[str, Any]

@@ -26,6 +26,7 @@ PAYLOADS = {
     "add_story_comment": {"story_id": 10, "comment": "Reviewed scope."},
     "move_work_item_to_next_sprint": {"work_item_id": 10, "comment": "Carry over."},
     "update_work_item_content": {"work_item_id": 10, "description": "Reviewed description."},
+    "update_task_fields": {"work_item_id": 10, "fields": {"System.Tags": "reviewed"}},
     "create_calendar_event": {"title": "Review", "start": "2026-10-02T09:00:00+00:00",
                                "end": "2026-10-02T10:00:00+00:00"},
     "schedule_reminder": {"title": "Review", "remind_at": "2026-10-02T09:00:00+00:00", "message": "Review."},
@@ -80,6 +81,13 @@ class AtomicNativeClient:
         if name == "update_work_item_content" and "title" in arguments:
             return {"executed": True, "id": self.details["id"], "title": arguments["title"],
                     "revision": self.details["revision"]}
+        if name == "update_task_fields":
+            return {
+                "executed": True,
+                "id": self.details["id"],
+                "revision": self.details["revision"],
+                "confirmed_fields": deepcopy(arguments["fields"]),
+            }
         return [] if self.invalid_result else {"executed": True, "native": name}
 
 
@@ -113,6 +121,7 @@ class AtomicRuntimeHarness:
         self.assertEqual(ATOMIC_ACTION_CAPABILITIES[action], capability_name)
         preview = deepcopy(state["verified_lifecycle_binding"]["preview"])
         preview.pop("item_context", None)
+        preview.pop("task_field_context", None)
         self.assertEqual(preview, arguments)
         self.issued.append((action, capability_name, deepcopy(arguments)))
         return "test:execution-capability"
@@ -264,18 +273,57 @@ class AtomicTitleTests(AtomicRuntimeHarness, TestCase):
         self.assertEqual(len(self.client.effects), 1)
 
 
+class AtomicTaskFieldTests(AtomicRuntimeHarness, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.details.update(
+            work_item_type="Task",
+            browser_url="https://dev.azure.com/org/Project/_workitems/edit/10",
+            field_values={"System.IterationPath": "Project\\Sprint 21", "System.Tags": "old"},
+        )
+        self.arguments = {
+            "work_item_id": 10,
+            "fields": {"System.IterationPath": "Project\\Sprint 22", "System.Tags": "reviewed"},
+        }
+
+    def test_task_field_preview_binds_current_values_and_confirmed_response(self):
+        graph, config, first = self.preview("update_task_fields", self.arguments)
+        self.assertEqual(first["pending_approval"]["preview"]["task_field_context"], {
+            "work_item_type": "Task",
+            "browser_url": self.client.details["browser_url"],
+            "current_values": {"System.IterationPath": "Project\\Sprint 21", "System.Tags": "old"},
+        })
+        result = self.approve(graph, config, first)
+        self.assertEqual(result["outcome"], "completed")
+        self.assertEqual(self.client.effects[0][0], "update_task_fields")
+        self.assertEqual(self.client.effects[0][1]["fields"], self.arguments["fields"])
+
+    def test_task_field_edit_blocks_current_value_or_type_changes(self):
+        for field, value in (
+            ("field_values", {"System.IterationPath": "Project\\Sprint 23", "System.Tags": "old"}),
+            ("work_item_type", "Bug"),
+        ):
+            with self.subTest(field=field):
+                graph, config, first = self.preview("update_task_fields", self.arguments)
+                original = self.client.details[field]
+                self.client.details[field] = value
+                self.assertEqual(self.approve(graph, config, first)["outcome"], "blocked")
+                self.client.details[field] = original
+        self.assertEqual(self.client.effects, [])
+
+
 class AtomicRuntimeTests(AtomicRuntimeHarness, TestCase):
     def test_catalog_covers_all_declared_capabilities(self):
         expected = {"get_active_user", "get_my_work_items", "get_my_blocked_items", "get_my_daily_summary",
             "get_user_stories", "get_sprint_stories", "get_sprint_stories_detailed", "get_story_details", "get_open_prs",
             "preview_story_branch_association", "preview_story_pull_request", "associate_story_branch",
             "create_story_pull_request", "create_work_item", "find_similar_technical_debts",
-            "save_technical_debt_preview_cache", "update_work_item_content", "update_work_item_effort",
+            "save_technical_debt_preview_cache", "update_work_item_content", "update_task_fields", "update_work_item_effort",
             "move_work_item_to_next_sprint", "update_story_status", "add_story_comment", "sync_daily_tracking",
             "update_task_control", "append_daily_action_log", "record_ai_metrics", "read_tracking_snapshot",
             "send_notification", "create_calendar_event", "get_upcoming_deadlines", "schedule_reminder"}
         self.assertEqual(set(CAPABILITY_CATALOG), expected | {"get_sprint_work_report", "get_work_item_process_metadata"})
-        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (14, 2, 9, 7))
+        self.assertEqual((len(READ_SCHEMAS), len(PREVIEW_SCHEMAS), len(MUTATION_SCHEMAS), len(LIFECYCLE_ROUTES)), (14, 2, 10, 7))
 
     def test_all_reads_and_previews_call_native_directly(self):
         for name in (*READ_SCHEMAS, *PREVIEW_SCHEMAS):

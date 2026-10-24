@@ -80,8 +80,8 @@ def _notification_text(result: AgentState) -> tuple[str, str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Gera a prévia de fechamento de fim de dia sem escrever no Azure DevOps. "
-            "A execução exige aprovação humana separada no lifecycle."
+            "Lança as horas da task ativa, fecha-a e cria a continuação no Azure DevOps. "
+            "Com --dry-run gera apenas a prévia, sem escrita."
         ),
     )
     parser.add_argument("--trigger", choices=("manual", "scheduled", "completed"), default="manual")

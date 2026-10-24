@@ -23,7 +23,7 @@ class GraphCatalogTests(TestCase):
         with patch.object(InspectionPort, "blocked", side_effect=AssertionError("Unexpected IO")) as blocked:
             catalog = graph_catalog()
         blocked.assert_not_called()
-        self.assertEqual(len(catalog), 13)
+        self.assertEqual(len(catalog), 16)
         json.dumps(catalog, allow_nan=False)
         for graph in catalog:
             with self.subTest(graph=graph["id"]):
@@ -115,4 +115,4 @@ class GraphCatalogTests(TestCase):
                 self.assertEqual(value["version"], 1)
             else:
                 self.assertIsInstance(value, list)
-                self.assertEqual(len(value), 13)
+                self.assertEqual(len(value), 16)

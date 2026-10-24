@@ -7,6 +7,9 @@ from kwikledgers_langgraph.adapters import (
     DayEndClosurePorts,
     SprintStoriesPorts,
     StoryBranchAssociationPorts,
+    StoryPrCherryPickPorts,
+    StoryPrLaunchPorts,
+    StoryPrPublishPorts,
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
     TaskClosurePorts,
@@ -16,6 +19,9 @@ from kwikledgers_langgraph.adapters import (
 
 MUTABLE_RUNTIME_BUILDERS: dict[str, str] = {
     "story_pull_request": "build_story_pull_request_runtime",
+    "story_pr_launch": "build_story_pr_launch_runtime",
+    "story_pr_publish": "build_story_pr_publish_runtime",
+    "story_pr_cherry_pick": "build_story_pr_cherry_pick_runtime",
     "story_branch_association": "build_story_branch_association_runtime",
     "story_status_transition": "build_story_status_transition_runtime",
 }
@@ -53,6 +59,24 @@ def build_story_pull_request_runtime(ports: StoryPullRequestPorts) -> Any:
         raise
 
     return build_story_pull_request_graph(ports)
+
+
+def build_story_pr_launch_runtime(ports: StoryPrLaunchPorts) -> Any:
+    from kwikledgers_langgraph.graphs.story_pr_launch import build_story_pr_launch_graph
+
+    return build_story_pr_launch_graph(ports)
+
+
+def build_story_pr_publish_runtime(ports: StoryPrPublishPorts) -> Any:
+    from kwikledgers_langgraph.graphs.story_pr_publish import build_story_pr_publish_graph
+
+    return build_story_pr_publish_graph(ports)
+
+
+def build_story_pr_cherry_pick_runtime(ports: StoryPrCherryPickPorts) -> Any:
+    from kwikledgers_langgraph.graphs.story_pr_cherry_pick import build_story_pr_cherry_pick_graph
+
+    return build_story_pr_cherry_pick_graph(ports)
 
 
 def build_story_branch_association_runtime(ports: StoryBranchAssociationPorts) -> Any:

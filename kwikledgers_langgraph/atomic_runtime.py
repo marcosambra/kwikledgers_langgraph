@@ -52,6 +52,7 @@ MUTATION_SCHEMAS = {
     "add_story_comment": AtomicSchema(("story_id", "comment")),
     "move_work_item_to_next_sprint": AtomicSchema(("work_item_id",), ("comment",)),
     "update_work_item_content": AtomicSchema(("work_item_id",), ("title", "description", "acceptance_criteria", "comment")),
+    "update_task_fields": AtomicSchema(("work_item_id", "fields"), ("comment",)),
     "create_calendar_event": AtomicSchema(("title", "start", "end"), ("description", "reminder_minutes")),
     "schedule_reminder": AtomicSchema(("title", "remind_at", "message")),
     "send_notification": AtomicSchema(("title", "message"), ("urgency",)),
@@ -79,7 +80,7 @@ CAPABILITY_CATALOG = {
     **{name: "lifecycle_required" for name in LIFECYCLE_ROUTES},
 }
 REVISION_TARGETS = {"add_story_comment": "story_id", "move_work_item_to_next_sprint": "work_item_id",
-                    "update_work_item_content": "work_item_id"}
+                    "update_work_item_content": "work_item_id", "update_task_fields": "work_item_id"}
 TEXT_FIELDS = frozenset({
     "email", "repository_name", "title", "description", "acceptance_criteria", "comment",
     "source_branch", "target_branch", "what_was_changed", "affected_processes", "expected_impacts",
@@ -103,6 +104,23 @@ def _positive_id(value: Any) -> bool:
 
 def _number(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+
+def _task_fields(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and all(
+            isinstance(reference, str)
+            and reference.strip()
+            and (
+                (isinstance(field_value, str) and bool(field_value.strip()))
+                or (type(field_value) in (bool, int, float)
+                    and (not isinstance(field_value, float) or math.isfinite(field_value)))
+            )
+            for reference, field_value in value.items()
+        )
+    )
 
 
 def _aware_time(value: str) -> datetime:
@@ -169,6 +187,9 @@ def validate_arguments(name: str, arguments: dict[str, Any], *, technical: bool 
                 raise ValueError("actions_taken must be an array of nonempty text")
         elif field == "child_tasks":
             _child_tasks(value)
+        elif field == "fields":
+            if not _task_fields(value):
+                raise ValueError("Task fields must be a nonempty mapping of scalar values")
         else:
             raise ValueError("Unvalidated atomic field")
     if name == "update_work_item_content":
@@ -221,13 +242,15 @@ def _details(client: CapabilityClient, identifier: int) -> dict[str, Any]:
 
 
 def _content_policy(name: str, details: dict[str, Any], arguments: dict[str, Any]) -> None:
-    if name != "update_work_item_content":
+    if name not in {"update_work_item_content", "update_task_fields"}:
         return
     kind = details.get("work_item_type")
     if not isinstance(kind, str) or not kind.strip():
         raise ValueError("Native work item type required for content edits")
     if kind.casefold().replace("_", " ").replace("-", " ") not in {"task", "bug", "user story", "story"}:
         raise LifecycleRequired("Work item content requires its specific lifecycle (including technical debt)")
+    if name == "update_task_fields" and kind.casefold() != "task":
+        raise LifecycleRequired("Generic field edits are only supported for Tasks")
     if "title" in arguments and kind.casefold() != "task":
         raise LifecycleRequired("Title edits are only supported for Tasks")
 
@@ -243,6 +266,21 @@ def _title_context(details: dict[str, Any], identifier: int) -> dict[str, str]:
     return {"current_title": title, "work_item_type": details["work_item_type"], "browser_url": url}
 
 
+def _task_field_context(details: dict[str, Any], identifier: int, fields: dict[str, Any]) -> dict[str, Any]:
+    if details.get("work_item_type", "").casefold() != "task":
+        raise LifecycleRequired("Generic field edits are only supported for Tasks")
+    browser_url = details.get("browser_url")
+    values = details.get("field_values")
+    if (not isinstance(browser_url, str) or not browser_url.endswith(f"/_workitems/edit/{identifier}")
+            or not isinstance(values, dict) or any(reference not in values for reference in fields)):
+        raise ValueError("Authoritative current Task field values required")
+    return {
+        "work_item_type": "Task",
+        "browser_url": browser_url,
+        "current_values": {reference: deepcopy(values[reference]) for reference in fields},
+    }
+
+
 def atomic_preview_arguments(name: str, preview: dict[str, Any]) -> dict[str, Any]:
     payload = deepcopy(preview)
     if name == "update_work_item_content" and "title" in payload:
@@ -253,6 +291,20 @@ def atomic_preview_arguments(name: str, preview: dict[str, Any]) -> dict[str, An
                 or context["work_item_type"].casefold() != "task"):
             raise ValueError("Task title preview requires authoritative display context")
         _title_context({"title": context["current_title"], **context}, payload.get("work_item_id"))
+    if name == "update_task_fields":
+        context = payload.pop("task_field_context", None)
+        fields = payload.get("fields")
+        if not isinstance(context, dict) or not isinstance(fields, dict):
+            raise ValueError("Task field preview requires authoritative display context")
+        _task_field_context(
+            {
+                "work_item_type": context.get("work_item_type"),
+                "browser_url": context.get("browser_url"),
+                "field_values": context.get("current_values"),
+            },
+            payload.get("work_item_id"),
+            fields,
+        )
     return validate_arguments(name, payload, technical=True)
 
 
@@ -274,15 +326,20 @@ class AtomicLifecycleGateway(LifecycleGateway):
                     raise ValueError("Native revision changed; obtain a new preview and receipt")
                 if "title" in payload and arguments["item_context"] != _title_context(fresh, identifier):
                     raise ValueError("Title context changed; obtain a new preview")
+                if name == "update_task_fields" and arguments["task_field_context"] != _task_field_context(
+                    fresh, identifier, payload["fields"],
+                ):
+                    raise ValueError("Task field context changed; obtain a new preview")
             state = active_state(action)
             token = self.execution_issuer(state, action=action, capability_name=name, arguments=deepcopy(payload))
             if not isinstance(token, str) or not token.strip():
                 raise ValueError("Execution capability missing")
+            confirmed_task_fields = name == "update_task_fields"
             title_edit = name == "update_work_item_content" and "title" in payload
             try:
                 result = self.client.call(name, {**payload, "execution_capability": token})
             except FastMCPClientError:
-                if not title_edit:
+                if not title_edit and not confirmed_task_fields:
                     raise
                 raise FastMCPClientError(
                     "Task title update was dispatched; reconcile the result before retry.",
@@ -295,6 +352,16 @@ class AtomicLifecycleGateway(LifecycleGateway):
             ):
                 raise FastMCPClientError(
                     "Azure did not confirm the approved task title and revision; reconcile before retry.",
+                    execution_outcome_unknown=True,
+                )
+            if confirmed_task_fields and (
+                not isinstance(result, dict) or result.get("id") != payload["work_item_id"]
+                or result.get("confirmed_fields") != payload["fields"]
+                or not _positive_id(result.get("revision"))
+                or result["revision"] <= payload["expected_revision"]
+            ):
+                raise FastMCPClientError(
+                    "Azure did not confirm the approved Task fields and revision; reconcile before retry.",
                     execution_outcome_unknown=True,
                 )
             return result
@@ -333,6 +400,10 @@ def build_atomic_runtime(name: str, ports: LifecyclePorts, *, checkpointer: Any,
             payload["expected_revision"] = details["revision"]
             if "title" in payload:
                 payload["item_context"] = _title_context(details, payload["work_item_id"])
+            if name == "update_task_fields":
+                payload["task_field_context"] = _task_field_context(
+                    details, payload["work_item_id"], payload["fields"],
+                )
         atomic_preview_arguments(name, payload)
         return payload
 

@@ -55,10 +55,17 @@ def _event(ports: LifecyclePorts, state: LifecycleState, action: str, phase: str
     return updates
 
 
+def _safe_detail(error: BaseException) -> str | None:
+    return str(error) if getattr(error, "safe_detail", False) else None
+
+
 def _failure(ports: LifecyclePorts, state: LifecycleState, action: str, *,
-             reason: str = "pre_execution_failed", reconciliation: bool = False) -> dict[str, Any]:
+             reason: str = "pre_execution_failed", reconciliation: bool = False,
+             detail: str | None = None) -> dict[str, Any]:
     outcome = "reconciliation_required" if reconciliation else "blocked"
     updates = append_error(state, f"{action}: {reason}")
+    if detail:
+        updates = {**updates, **append_error({**state, **updates}, f"{action}: {detail}")}
     updates.update({"outcome": outcome, "outcome_reason": reason, "pending_approval": {}})
     try:
         updates.update(_event(ports, state, action, outcome))
@@ -108,12 +115,13 @@ def build_lifecycle_graph(
                     "outcome_reason": "",
                     "pending_approval": {}, "approval_confirmation": {},
                     "direct_pr_url": ""}
-        except Exception:
-            return {**_failure(ports, clean, name), "run_id": run_id,
+        except Exception as error:
+            return {**_failure(ports, clean, name, detail=_safe_detail(error)), "run_id": run_id,
                     "context": {}, "results": {}, "direct_pr_url": ""}
 
     def route(state: LifecycleState) -> str:
-        return END if state.get("outcome") in ("blocked", "denied", "reconciliation_required") else "next"
+        return END if state.get("outcome") in ("blocked", "denied", "reconciliation_required",
+                                          "not_reproduced", "retest_failed") else "next"
 
     def add_step(step: LifecycleStep, following: str) -> None:
         preview_node = f"{step.name}_preview"
@@ -131,14 +139,20 @@ def build_lifecycle_graph(
                 updates = _event(ports, state, step.name, "previewed")
                 if step.execute is None:
                     results = {**state.get("results", {}), step.name: preview}
-                    return {**updates, "results": results, "pending_approval": {}}
+                    updates = {**updates, "results": results, "pending_approval": {}}
+                    terminal = preview.get("terminal_outcome")
+                    if terminal in ("not_reproduced", "retest_failed"):
+                        updates.update({"outcome": terminal,
+                                        "outcome_reason": f"bug_{terminal}"})
+                    return updates
                 return {**updates, "pending_approval": pending}
             except GraphInterrupt:
                 raise
-            except Exception:
+            except Exception as error:
                 persisted = any(previous.execute is not None and previous.name in state.get("results", {})
                                 for previous in steps)
-                return _failure(ports, state, step.name, reconciliation=step.post_execution and persisted)
+                return _failure(ports, state, step.name, reconciliation=step.post_execution and persisted,
+                                detail=_safe_detail(error))
 
         graph.add_node(preview_node, prepare)
         if step.execute is None:

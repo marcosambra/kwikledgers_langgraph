@@ -14,18 +14,25 @@ O host consulta `python -m kwikledgers_langgraph.state_persistence --inspect
 workflow. No fechamento, `--work-kind fix`, `--fix-summary` e `--origin-task-id`
 propagam o contexto da correção para a política existente de Task própria.
 
-A edição supervisionada de título de uma Task existente reutiliza
+A edição supervisionada de conteúdo de uma Task existente reutiliza
 `python -m kwikledgers_langgraph.atomic_cli mutation update_work_item_content`.
-O JSON de argumentos aceita `work_item_id` e `title` (texto não vazio, em uma
-linha), opcionalmente junto de descrição, critérios ou comentário. Renomear
-outros tipos de item permanece bloqueado. A prévia contém o título atual,
-o novo título, tipo, URL de navegação e revisão; `item_context` é contexto
-somente de apresentação e nunca argumento enviado ao FastMCP. Aprovar exige
-uma invocação posterior com `--resume --approval-request-id`, usando o mesmo
-checkpoint, thread e argumentos. Alterar o título aprovado, o contexto ou a
-revisão exige nova prévia. Erro após envio ou título/revisão não confirmados
-retornam `reconciliation_required`, sem repetição automática da escrita.
-Status, sprint, pai, responsável e horas não são alterados por essa edição.
+Para qualquer outro campo simples editável da Task, use
+`python -m kwikledgers_langgraph.atomic_cli mutation update_task_fields` com
+`work_item_id` e `fields` (mapa de referências Azure para valores escalares).
+O FastMCP consulta os campos habilitados no processo e bloqueia tipo, relações,
+auditoria e referências não suportadas. A prévia contém os valores atuais e
+propostos, tipo, URL de navegação e revisão; os contextos de apresentação nunca
+são enviados ao FastMCP. Aprovar exige uma invocação posterior com `--resume
+--approval-request-id`, usando o mesmo checkpoint, thread e argumentos.
+Alterar o campo aprovado, seu valor atual ou a revisão exige nova prévia. Erro
+após envio ou retorno não confirmado resulta em `reconciliation_required`, sem
+repetição automática da escrita.
+
+Para lançar horas sem fechar a Task, use o lifecycle oficial
+`python -m kwikledgers_langgraph.lifecycle_cli task_hours` com
+`--completed-work-hours`, `--story-id`, `--task-id`, repositório, checkpoint e
+thread. O fluxo preserva status e `Remaining Work`, cria a prévia com revisão
+nativa e exige aprovação explícita em uma retomada separada.
 A topologia, os eventos e os nomes de métricas existentes são preservados;
 o catálogo operacional deriva o novo campo do schema, sem nova capability.
 
@@ -48,7 +55,7 @@ evidências suficientes para garantir testes, commit, início e associações;
 uma confirmação isolada não pode contornar essas exigências. No ciclo oficial,
 a PR continua Draft para `stage-pre-prod`, com template do repositório, Mermaid
 ao final, URL validada e aprovação independente para `Aguardando PR`. O fechamento
-diário/hook continua somente prévia; esta entrega não ativa fechamento automático.
+diário (`day_end_closure`) é automático às 18h, como descrito em "Fechamento de tarefas".
 As CLIs menores também persistem resultado e reserva por run/request antes
 da escrita. Repetir uma aprovação concluída reutiliza seu resultado; uma
 tentativa de resultado desconhecido exige reconciliação, sem retry automático.
@@ -102,7 +109,11 @@ poetry run python -m kwikledgers_langgraph.work_item_creation_config_cli \
 ```
 
 O comando não cria work items nem aprova operações Azure. A saída é um arquivo
-local novo; arquivos existentes não são substituídos. Metadados incompletos ou
+local; arquivos existentes só são substituídos com `--replace`, e apenas depois
+da leitura bem-sucedida dos metadados. Uma Task é sempre filha do pai informado,
+seja qual for o tipo dele (Habilitador Técnico, Technical Debt, Feature etc.);
+os demais tipos continuam exigindo uma história como pai. Quando a criação é
+bloqueada, o motivo da validação aparece em `errors`. Metadados incompletos ou
 indisponíveis bloqueiam a preparação, sem inventar restrições. O fluxo aparece
 no catálogo operacional e mantém os eventos e artefatos de observabilidade
 existentes; a criação posterior continua sujeita à prévia e aprovação próprias.
@@ -267,6 +278,9 @@ Tracking nativo:
 - `kwikledgers_langgraph/graphs/mutable_flow.py`: seam compartilhado para fluxos mutaveis preview-first
 - `kwikledgers_langgraph/graphs/daily_summary.py`: primeiro subgrafo
 - `kwikledgers_langgraph/graphs/story_pull_request.py`: fluxo de preview/aprovacao/criacao de PR da story
+- `kwikledgers_langgraph/graphs/story_pr_launch.py`: lancamento da PR Draft de branch ja publicada (checklist, preview, aprovacao, criacao e verificacao); CLI `python -m kwikledgers_langgraph.story_pr_launch_cli`
+- `kwikledgers_langgraph/graphs/story_pr_publish.py`: tira a PR ativa da historia de Draft (preview, aprovacao, guarda do commit de origem e verificacao); CLI `python -m kwikledgers_langgraph.story_pr_publish_cli`
+- `kwikledgers_langgraph/graphs/story_pr_cherry_pick.py`: cherry-pick sem merge de uma PR ativa para `stage-homolog` (uma PR por execucao) pela API do Azure; em conflito ou falha usa worktree dedicado em `./worktrees` (`story_pr_worktree.py`), preservado para resolucao manual e retomado de forma idempotente, sem abort, reset ou force; CLI `python -m kwikledgers_langgraph.story_pr_cherry_pick_cli`. A PR da branch `cherry-pick/KL-<id>-...` para o alvo sai por `story_pr_launch --target-branch stage-homolog`
 - `kwikledgers_langgraph/graphs/story_branch_association.py`: fluxo de preview/aprovacao/associacao de branch da story
 - `kwikledgers_langgraph/graphs/story_status_transition.py`: fluxo de preview/aprovacao/transicao de status da story
 - `kwikledgers_langgraph/runtime.py`: fabrica de compilacao do runtime
@@ -318,22 +332,23 @@ poetry run kwikledgers-langgraph-story-status --help
 
 ## Fechamento de tarefas
 
-O fluxo `day_end_closure` gera somente a prévia de horas, fechamento e eventual
-continuação. Nenhum gatilho, manual, agendado ou de conclusão, escreve no Azure.
-A execução requer aprovação humana independente pelo lifecycle; evidência de
-atividade e testes aprovados não substitui essa aprovação.
+O fluxo `day_end_closure` lança as horas da task ativa, fecha-a e cria a
+continuação igual sem aprovação separada (exceção autônoma do workspace), às 18h
+pelo agendamento ou sob demanda. Com `--dry-run` gera somente a prévia, sem
+escrita no Azure. Evidência de atividade e testes aprovados continuam sendo
+pré-requisito da execução.
 
 ```bash
 poetry install
 poetry run kwikledgers-langgraph-day-end-closure --trigger manual --backend fastmcp --timezone America/Sao_Paulo --dry-run
 ```
 
-O gerador `scripts/register-day-end-closure.sh` prepara uma prévia nativa às 18h,
+O gerador `scripts/register-day-end-closure.sh` agenda o fechamento automático às 18h,
 de segunda a sexta, e exige cron, os dois runtimes locais e o fuso de São Paulo.
 O arquivo de ambiente deve ser absoluto, existente e legível, sem `%` ou quebra
 de linha; o padrão é `kwikledgers_fastmcp/.env`. A instalação do agendamento é
-uma ação operacional separada e não foi executada nesta validação.
-Sem atividade vinculada à task, a prévia é ignorada; várias tasks ativas sem
+uma ação operacional separada.
+Sem atividade vinculada à task, o fechamento é ignorado (`no_task_activity`); várias tasks ativas sem
 seleção explícita impedem a seleção automática. A CLI usa FastMCP por padrão,
 inclusive quando chamada por consumidores que não selecionam um backend.
 

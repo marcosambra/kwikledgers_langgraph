@@ -224,7 +224,7 @@ class WorkItemCreationTests(CreationHarness, TestCase):
         task = {**self.arguments, "work_item_type": "Task"}
         with self.assertRaises(CreationValidationError):
             self.graph(task)
-        for field, value in (("id", True), ("revision", None), ("project", "Other"), ("work_item_type", "Technical Debt")):
+        for field, value in (("id", True), ("revision", None), ("project", "Other")):
             with self.subTest(field=field):
                 original = deepcopy(self.parent)
                 self.parent[field] = value
@@ -234,6 +234,22 @@ class WorkItemCreationTests(CreationHarness, TestCase):
                 self.assertFalse(result["pending_approval"])
                 self.parent = original
         self.assertFalse(self.effects)
+
+    def test_task_is_child_of_parent_for_any_parent_type(self):
+        for kind in ("Habilitador Técnico", "Technical Debt", "Feature", "Bug"):
+            with self.subTest(kind=kind):
+                self.parent["work_item_type"] = kind
+                graph, config, first = self.preview({**self.arguments, "work_item_type": "Task",
+                                                     "parent_work_item_id": 10})
+                self.assertTrue(first["__interrupt__"])
+                self.assertEqual(first["context"]["creation_parent"]["work_item_type"], kind)
+
+    def test_blocked_creation_exposes_the_validation_reason(self):
+        self.parent["work_item_type"] = "Bug"
+        graph = self.graph({**self.arguments, "work_item_type": "Bug", "parent_work_item_id": 10})
+        result = graph.invoke({"request": {}}, {"configurable": {"thread_id": "reason"}})
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertTrue(any("Parent must be" in error for error in result["errors"]), result["errors"])
 
     def test_task_parent_revision_is_signed_context_not_synthetic_create_argument(self):
         graph, config, first = self.preview({**self.arguments, "work_item_type": "Task", "parent_work_item_id": 10})
@@ -304,6 +320,16 @@ class WorkItemCreationTests(CreationHarness, TestCase):
         effect = dict(self.effects[0])
         self.assertIn(".", effect.pop("execution_capability"))
         self.assertEqual(effect, first["pending_approval"]["preview"])
+
+    def test_formatter_keeps_safe_structure_and_escapes_everything_else(self):
+        structured = "<h3>Contexto</h3><p>Texto.</p><ul><li>Um</li><li>Dois<br>linhas</li></ul>"
+        self.assertEqual(format_creation_rich_text(structured), structured)
+        for value in ("<ul><li><ul><li>x</li></ul></li></ul>", "<h3>a<p>b</p></h3>", "<ul>texto</ul>",
+                      "<li>solto</li>", "<h3 id='x'>a</h3>", "<div>a</div>", "# Titulo\n- item"):
+            with self.subTest(value=value):
+                formatted = format_creation_rich_text(value)
+                self.assertTrue(formatted.startswith("<p>"))
+                self.assertEqual(format_creation_rich_text(formatted), formatted)
 
     def test_neutral_formatter_is_idempotent_and_escapes_untrusted_html(self):
         for value in ("Plain text.", "Line 1\nLine 2", "<script>alert(1)</script>", '<p onclick="x">Text</p>'):

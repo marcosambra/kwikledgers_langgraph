@@ -12,6 +12,9 @@ from kwikledgers_langgraph.adapters import (
     DayEndClosurePorts,
     SprintStoriesPorts,
     StoryBranchAssociationPorts,
+    StoryPrCherryPickPorts,
+    StoryPrLaunchPorts,
+    StoryPrPublishPorts,
     StoryPullRequestPorts,
     StoryStatusTransitionPorts,
     TaskClosurePorts,
@@ -98,6 +101,50 @@ def build_story_pull_request_ports(
     raise BackendSelectionError(
         "Backend invalido para a capability 'story_pull_request'."
     )
+
+
+def build_story_pr_launch_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryPrLaunchPorts:
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryPrLaunchAdapter
+        from kwikledgers_langgraph.story_pr_preflight import GitPreflightAdapter
+
+        return StoryPrLaunchPorts(
+            pull_requests=FastMCPStoryPrLaunchAdapter(client, execution_capability_provider),
+            preflight=GitPreflightAdapter(),
+        )
+
+    raise BackendSelectionError("Backend invalido para a capability 'story_pr_launch'.")
+
+
+def build_story_pr_publish_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryPrPublishPorts:
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryPrPublishAdapter
+
+        return StoryPrPublishPorts(pull_requests=FastMCPStoryPrPublishAdapter(client, execution_capability_provider))
+
+    raise BackendSelectionError("Backend invalido para a capability 'story_pr_publish'.")
+
+
+def build_story_pr_cherry_pick_ports(
+    *, backend_name: str, client: CapabilityClient | None = None,
+    execution_capability_provider: ExecutionCapabilityProvider | None = None,
+) -> StoryPrCherryPickPorts:
+    if backend_name == FASTMCP_BACKEND:
+        from kwikledgers_langgraph.fastmcp_adapters import FastMCPStoryPrCherryPickAdapter
+        from kwikledgers_langgraph.story_pr_worktree import GitWorktreeAdapter
+
+        return StoryPrCherryPickPorts(
+            pull_requests=FastMCPStoryPrCherryPickAdapter(client, execution_capability_provider),
+            worktree=GitWorktreeAdapter(),
+        )
+
+    raise BackendSelectionError("Backend invalido para a capability 'story_pr_cherry_pick'.")
 
 
 def build_story_branch_association_ports(

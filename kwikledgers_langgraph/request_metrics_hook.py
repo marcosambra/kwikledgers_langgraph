@@ -25,18 +25,25 @@ def handle_event(
     *,
     tracking_root: Path,
 ) -> dict[str, str] | None:
-    """Record observable lifecycle events, never prompts, tool inputs or results."""
+    """
+        Record observable lifecycle events, never prompts, tool inputs or results.
+    """
+
     if payload.get("stop_hook_active"):
         return None
+
     session_id = payload.get("session_id") or payload.get("sessionId")
     if not isinstance(session_id, str) or not session_id:
         raise ValueError("Hook de métricas sem session_id; solicitação não registrada.")
+
     routing = TrackingService(tracking_root=tracking_root)
     route_path = tracking_root / "Task_Control" / "handoff-sessions" / f"{hashlib.sha256(session_id.encode()).hexdigest()}.json"
+
     with routing.locked():
         route = json.loads(route_path.read_text(encoding="utf-8")) if route_path.exists() else None
     selected_root = Path(route["tracking_root"]) if route else tracking_root
     service = RequestMetricsService(tracking_root=selected_root)
+
     if event == "UserPromptSubmit":
         if route:
             old = HandoffStore(selected_root).read(route["handoff_id"])
@@ -52,6 +59,7 @@ def handle_event(
             payload.get("prompt"), workspace_root=tracking_root.parent, default_tracking_root=tracking_root,
         )
         handoff_message = ""
+
         if descriptor:
             selected_root, handoff_id = descriptor
             service = RequestMetricsService(tracking_root=selected_root)

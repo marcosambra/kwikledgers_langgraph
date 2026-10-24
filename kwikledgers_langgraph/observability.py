@@ -322,15 +322,19 @@ def append_runtime_usage_metrics(state: AgentState, *, tracking_root: str | Path
 
 
 def append_runtime_event_stream(state: AgentState, *, tracking_root: str | Path | None = None) -> Path:
+    from kwikledgers_fastmcp.domains.local_tracking.segmented_jsonl import SegmentedJsonl
+
     root = resolve_ai_tracking_root(tracking_root)
     metrics_dir = root / "Metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     events_path = metrics_dir / "langgraph-runtime-events.jsonl"
     emitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    with events_path.open("a", encoding="utf-8") as handle:
-        for record in build_runtime_event_stream_records(state):
-            handle.write(json.dumps({"emitted_at": emitted_at, **record}, ensure_ascii=False) + "\n")
+    lines = [
+        (json.dumps({"emitted_at": emitted_at, **record}, ensure_ascii=False) + "\n").encode("utf-8")
+        for record in build_runtime_event_stream_records(state)
+    ]
+    SegmentedJsonl(events_path, timestamp_key="emitted_at").append(lines)
 
     return events_path
 

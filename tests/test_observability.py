@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kwikledgers_langgraph.observability import (
+    append_runtime_event_stream,
     append_runtime_usage_metrics,
     append_request_metrics,
     build_observability_context,
@@ -187,6 +188,26 @@ class ObservabilityTestCase(unittest.TestCase):
 
         self.assertIn("runtime:story_status_transition:completed", content)
         self.assertIn("Resumo: Transicao concluida.", content)
+
+    def test_runtime_event_stream_rolls_into_parts_of_at_most_the_cap(self) -> None:
+        state = {
+            "source": "test",
+            "tracking_events": [],
+            "observability": build_observability_context(flow_name="story_status_transition", source="test"),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "kwikledgers_fastmcp.domains.local_tracking.segmented_jsonl.MAX_SEGMENT_BYTES", 2000,
+        ):
+            for _ in range(20):
+                path = append_runtime_event_stream(state, tracking_root=Path(temp_dir))
+            segments = sorted(path.parent.glob("langgraph-runtime-events*.jsonl"))
+            records = [json.loads(line) for segment in segments for line in segment.read_text().splitlines()]
+            sizes = [segment.stat().st_size for segment in segments]
+
+        self.assertEqual(path.name, "langgraph-runtime-events.jsonl")
+        self.assertGreater(len(segments), 1)
+        self.assertTrue(all(size <= 2000 for size in sizes))
+        self.assertTrue(all("emitted_at" in record for record in records))
 
 
 if __name__ == "__main__":

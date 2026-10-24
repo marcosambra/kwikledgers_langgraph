@@ -10,8 +10,53 @@ from kwikledgers_langgraph.lifecycle_state import LifecycleState
 from kwikledgers_langgraph.task_closure_policy import build_verified_task_closure_preview
 
 
+def _is_bug(context: dict[str, Any]) -> bool:
+    return (context.get("story_details") or {}).get("work_item_type") == "Bug"
+
+
+def _nonempty(value: Any) -> bool:
+    return bool(value) and not (isinstance(value, str) and not value.strip())
+
+
 def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
     _require_ports(ports, "tasks", "work_items", "branches")
+
+    def reproduce(state: LifecycleState) -> dict[str, Any]:
+        context = state["context"]
+        if not _is_bug(context):
+            return {"applicable": False}
+        if ports.reproduction is None:
+            raise ValueError("Bug stories require the official browser reproduction capability")
+        if ports.tracking.story_start_complete(context) is not True:
+            raise ValueError("Durable completed story-start required before reproduction")
+        saved = ports.reproduction.saved_error_path(context)
+        if saved:
+            return {"reproduced": True, "resumed": True, "evidence": "resumed after failed retest",
+                    "error_path": saved}
+        result = ports.reproduction.reproduce(context, key=f'{state["run_id"]}:reproduce')
+        if type(result.get("reproduced")) is not bool or not _nonempty(result.get("evidence")):
+            raise ValueError("Reproduction requires a boolean outcome and evidence")
+        if not result["reproduced"]:
+            return {"reproduced": False, "evidence": result["evidence"],
+                    "terminal_outcome": "not_reproduced"}
+        if not isinstance(result.get("error_path"), list) or not result["error_path"]:
+            raise ValueError("Reproduced bug requires a mapped error path")
+        ports.reproduction.save_error_path(context, result["error_path"],
+                                           key=f'{state["run_id"]}:save_error_path')
+        return {"reproduced": True, "evidence": result["evidence"], "error_path": result["error_path"]}
+
+    def retest(state: LifecycleState) -> dict[str, Any]:
+        if not _is_bug(state["context"]):
+            return {"applicable": False}
+        path = state["results"]["reproduce"]["error_path"]
+        result = ports.reproduction.retest(state["context"], path, key=f'{state["run_id"]}:retest')
+        if type(result.get("passed")) is not bool or not _nonempty(result.get("evidence")):
+            raise ValueError("Browser retest requires a boolean outcome and evidence")
+        if not result["passed"]:
+            return {"passed": False, "evidence": result["evidence"], "error_path": path,
+                    "terminal_outcome": "retest_failed"}
+        ports.reproduction.clear_error_path(state["context"], key=f'{state["run_id"]}:clear_error_path')
+        return {"passed": True, "evidence": result["evidence"], "error_path": path}
 
     def plan(state: LifecycleState) -> dict[str, Any]:
         context = state["context"]
@@ -102,9 +147,11 @@ def build_task_cycle_graph(ports: LifecyclePorts, *, checkpointer: Any) -> Any:
         return ports.work_items.close(preview, key=key)
 
     return build_lifecycle_graph(ports, (
+        LifecycleStep("reproduce", reproduce),
         LifecycleStep("plan", plan),
         LifecycleStep("implement", implement),
         LifecycleStep("test", tests),
+        LifecycleStep("retest", retest),
         LifecycleStep("commit", commit),
         LifecycleStep("record_close", record_close),
         LifecycleStep("hours", hours_preview, hours),

@@ -49,8 +49,14 @@ class LifecycleProcessTests(TestCase):
         self.tasks.implement.return_value = {"implemented": True}
         self.tasks.test.return_value = {"passed": True, "evidence": "unit output"}
         self.tasks.commit.return_value = {"commit": "abc123"}
+        self.reproduction = Mock()
+        self.reproduction.reproduce.return_value = {"reproduced": True, "evidence": "console error",
+                                                    "error_path": ["open /payments", "click Pay"]}
+        self.reproduction.retest.return_value = {"passed": True, "evidence": "no error"}
+        self.reproduction.saved_error_path.return_value = None
         self.ports = LifecyclePorts(self.context, self.tracking, self.approvals, self.clock,
-                                   self.branches, self.work_items, self.prs, self.tasks)
+                                   self.branches, self.work_items, self.prs, self.tasks,
+                                   self.reproduction)
         self.config = {"configurable": {"thread_id": self.id()}}
 
     def start(self, name, request=None):
@@ -159,6 +165,67 @@ class LifecycleProcessTests(TestCase):
         self.assertEqual(result["pending_approval"]["preview"]["work_kind"], "fix")
         result = self.approve(self.approve(result))
         self.assertEqual(result["outcome"], "completed")
+
+    def make_bug(self):
+        self.scope["story_details"] = {"work_item_type": "Bug"}
+
+    def test_non_bug_never_uses_browser_reproduction(self):
+        result = self.start("task_cycle")
+        self.assertEqual(result["pending_approval"]["action"], "hours")
+        self.reproduction.reproduce.assert_not_called()
+        self.reproduction.retest.assert_not_called()
+
+    def test_bug_not_reproduced_stops_without_fix(self):
+        self.make_bug()
+        self.reproduction.reproduce.return_value = {"reproduced": False, "evidence": "flow ok"}
+        result = self.start("task_cycle")
+        self.assertEqual(result["outcome"], "not_reproduced")
+        self.tasks.plan.assert_not_called()
+        self.tasks.implement.assert_not_called()
+        self.work_items.hours.assert_not_called()
+
+    def test_bug_reproduced_is_retested_on_same_path_before_commit(self):
+        self.make_bug()
+        result = self.start("task_cycle")
+        self.assertEqual(result["pending_approval"]["action"], "hours")
+        self.assertEqual(self.reproduction.retest.call_args.args[1], ["open /payments", "click Pay"])
+        self.tasks.commit.assert_called_once()
+
+    def test_bug_failed_retest_stops_before_commit_and_keeps_error_path(self):
+        self.make_bug()
+        self.reproduction.retest.return_value = {"passed": False, "evidence": "still failing"}
+        result = self.start("task_cycle")
+        self.assertEqual(result["outcome"], "retest_failed")
+        self.tasks.commit.assert_not_called()
+        self.work_items.hours.assert_not_called()
+        self.reproduction.save_error_path.assert_called_once()
+        self.reproduction.clear_error_path.assert_not_called()
+
+    def test_bug_resumes_from_saved_path_without_reproducing_again_until_retest_passes(self):
+        self.make_bug()
+        self.reproduction.saved_error_path.return_value = ["open /payments", "click Pay"]
+        result = self.start("task_cycle")
+        self.reproduction.reproduce.assert_not_called()
+        self.reproduction.save_error_path.assert_not_called()
+        self.assertEqual(self.reproduction.retest.call_args.args[1], ["open /payments", "click Pay"])
+        self.reproduction.clear_error_path.assert_called_once()
+        self.tasks.commit.assert_called_once()
+        self.assertEqual(result["pending_approval"]["action"], "hours")
+
+    def test_bug_without_reproduction_capability_blocks_implementation(self):
+        self.make_bug()
+        self.ports = LifecyclePorts(self.context, self.tracking, self.approvals, self.clock,
+                                   self.branches, self.work_items, self.prs, self.tasks)
+        result = self.start("task_cycle")
+        self.assertEqual(result["outcome"], "blocked")
+        self.tasks.implement.assert_not_called()
+
+    def test_bug_reproduction_without_error_path_blocks(self):
+        self.make_bug()
+        self.reproduction.reproduce.return_value = {"reproduced": True, "evidence": "x"}
+        result = self.start("task_cycle")
+        self.assertEqual(result["outcome"], "blocked")
+        self.tasks.implement.assert_not_called()
 
     def test_failed_tests_prevent_commit_hours_and_close(self):
         self.tasks.test.return_value = {"passed": False, "evidence": "failure"}

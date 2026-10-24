@@ -32,6 +32,47 @@ class StoryPullRequestPort(Protocol):
         """Execute the story draft pull request creation."""
 
 
+class PullRequestPreflightPort(Protocol):
+    def run_preflight(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Run read-only repository and content checks before a story draft pull request."""
+
+
+class StoryPrPublishPort(Protocol):
+    def preview_publish(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Select the Draft PR of a story and describe what will be published."""
+
+    def publish_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Publish the approved Draft PR."""
+
+
+class StoryPrCherryPickPort(Protocol):
+    def list_candidate_pull_requests(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """List the active PRs of the story that can be cherry-picked."""
+
+    def cherry_pick(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Create the cherry-pick branch through the Azure API."""
+
+    def get_cherry_pick(self, repository_name: str, cherry_pick_id: int) -> dict[str, Any]:
+        """Read the progress of an Azure cherry-pick."""
+
+
+class WorktreeCherryPickPort(Protocol):
+    def inspect(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Read-only inspection of the local repository, worktree and remote branches."""
+
+    def apply(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Create the worktree and cherry-pick the PR commits into it."""
+
+    def finalize(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Continue after the user resolved a conflict in the preserved worktree."""
+
+    def push(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Publish the worktree branch without force."""
+
+    def remote_branch_sha(self, request: dict[str, Any]) -> str | None:
+        """Return the commit of the generated branch on origin, or None."""
+
+
 class StoryBranchAssociationPort(Protocol):
     def preview_story_branch_association(self, request: dict[str, Any]) -> dict[str, Any]:
         """Return a normalized preview payload for a story branch association."""
@@ -87,6 +128,23 @@ class DailySummaryPorts:
 @dataclass(frozen=True)
 class StoryPullRequestPorts:
     pull_requests: StoryPullRequestPort
+
+
+@dataclass(frozen=True)
+class StoryPrLaunchPorts:
+    pull_requests: StoryPullRequestPort
+    preflight: PullRequestPreflightPort
+
+
+@dataclass(frozen=True)
+class StoryPrPublishPorts:
+    pull_requests: StoryPrPublishPort
+
+
+@dataclass(frozen=True)
+class StoryPrCherryPickPorts:
+    pull_requests: StoryPrCherryPickPort
+    worktree: WorktreeCherryPickPort
 
 
 @dataclass(frozen=True)
@@ -208,6 +266,26 @@ class LifecycleTaskPort(Protocol):
         """
 
 
+class LifecycleBugReproductionPort(Protocol):
+    def reproduce(self, context: dict[str, Any], *, key: str) -> dict[str, Any]:
+        """Reproduce the bug in the browser through the official DevTools capability.
+        Return reproduced bool, nonempty evidence and, when reproduced, a nonempty
+        error_path (screen, action, request/response, console evidence).
+        """
+
+    def retest(self, context: dict[str, Any], error_path: list[Any], *, key: str) -> dict[str, Any]:
+        """Replay exactly the mapped error_path; return passed bool and nonempty evidence."""
+
+    def saved_error_path(self, context: dict[str, Any]) -> list[Any] | None:
+        """Return the durable error_path of an unresolved earlier attempt, if any."""
+
+    def save_error_path(self, context: dict[str, Any], error_path: list[Any], *, key: str) -> None:
+        """Durably keep the mapped error_path so a failed retest resumes without re-reproducing."""
+
+    def clear_error_path(self, context: dict[str, Any], *, key: str) -> None:
+        """Discard the saved error_path after the retest passes."""
+
+
 class LifecycleClockPort(Protocol):
     def now(self) -> str:
         """Return an aware ISO-8601 timestamp."""
@@ -223,6 +301,7 @@ class LifecyclePorts:
     work_items: LifecycleWorkItemPort | None = None
     pull_requests: LifecyclePullRequestPort | None = None
     tasks: LifecycleTaskPort | None = None
+    reproduction: LifecycleBugReproductionPort | None = None
 
 
 class TechnicalDebtPreparationPort(Protocol):

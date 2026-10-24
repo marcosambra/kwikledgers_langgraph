@@ -37,8 +37,8 @@ if ! LC_ALL=C crontab -l >"$existing" 2>"$errors"; then
 fi
 mkdir -p "$audit_dir"
 awk -v marker="$marker" 'index($0, marker) == 0' "$existing" >"$updated"
-printf '0 18 * * 1-5 /usr/bin/env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt KWIKLEDGERS_ROOT_DIR=%q KWIKLEDGERS_ENV_FILE=%q KWIKLEDGERS_FASTMCP_COMMAND=%q %q -m kwikledgers_langgraph.day_end_closure_cli --trigger scheduled --backend fastmcp --dry-run --timezone America/Sao_Paulo --notify >>%q 2>&1 %s\n' \
+printf '0 18 * * 1-5 /usr/bin/env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt KWIKLEDGERS_ROOT_DIR=%q KWIKLEDGERS_ENV_FILE=%q KWIKLEDGERS_FASTMCP_COMMAND=%q %q -m kwikledgers_langgraph.day_end_closure_cli --trigger scheduled --backend fastmcp --timezone America/Sao_Paulo --notify >>%q 2>&1 %s\n' \
     "$workspace_root" "$env_file" "$fastmcp_python" "$python_path" "$audit_dir/day-end-closure.log" "$marker" >>"$updated"
 crontab "$updated"
-printf 'Previa de fechamento agendada: segunda a sexta, 18:00 (America/Sao_Paulo), sem escrita no Azure.\n'
+printf 'Fechamento automatico agendado: segunda a sexta, 18:00 (America/Sao_Paulo), com escrita no Azure (horas, Closed e continuacao).\n'
 printf 'Log local: %s/day-end-closure.log\n' "$audit_dir"

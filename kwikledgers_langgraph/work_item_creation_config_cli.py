@@ -23,7 +23,10 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--repository", required=True, action="append", metavar="NAME=PATH",
                         help="Explicit authorized repository name and local path; repeat for each repository.")
-    result.add_argument("--output", required=True, type=Path, help="New local operator-config JSON; existing files are not replaced.")
+    result.add_argument("--output", required=True, type=Path,
+                        help="Local operator-config JSON; existing files are not replaced unless --replace is used.")
+    result.add_argument("--replace", action="store_true",
+                        help="Overwrite an existing --output file, only after the metadata was read successfully.")
     return result
 
 
@@ -35,8 +38,8 @@ def main(argv: list[str] | None = None) -> int:
             flow_name="work_item_creation_config", source="work-item-creation-config-cli", backend_name="fastmcp"),
     }
     try:
-        if args.output.exists():
-            raise FileExistsError("Operator config already exists; choose a new output file")
+        if args.output.exists() and not args.replace:
+            raise FileExistsError("Operator config already exists; choose a new output file or use --replace")
         repositories: dict[str, str] = {}
         for entry in args.repository:
             name, separator, path = entry.partition("=")

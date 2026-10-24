@@ -73,6 +73,29 @@ def technical_arguments_for_capability(capability_name: str, request: dict[str, 
             if preview.get(field) is not None:
                 arguments[field] = preview[field]
         return arguments
+    elif capability_name == "publish_story_pull_request":
+        preview = request.get("preview", {})
+        if not isinstance(preview, dict) or not preview.get("expected_source_commit"):
+            raise ValueError("Publishing requires an approved preview with expected_source_commit.")
+        return {
+            "repository_name": str(preview["repository_name"]),
+            "pull_request_id": int(preview["pull_request_id"]),
+            "expected_source_commit": str(preview["expected_source_commit"]),
+        }
+    elif capability_name == "cherry_pick_story_pull_request":
+        preview = request.get("preview", {})
+        if not isinstance(preview, dict):
+            raise ValueError("Cherry-pick requires a structured approved preview.")
+        if preview.get("action") != "azure_api":
+            return {}
+        return {
+            "repository_name": str(preview["repository_name"]),
+            "pull_request_id": int(preview["pull_request_id"]),
+            "target_branch": str(preview["target_branch"]),
+            "generated_branch": str(preview["generated_branch"]),
+            "expected_source_commit": str(preview["expected_source_commit"]),
+            "wait_seconds": int(preview.get("wait_seconds", 90)),
+        }
     elif capability_name == "sync_daily_tracking":
         return {
             "summary": json.dumps(request["summary"], ensure_ascii=True),
@@ -263,6 +286,83 @@ class FastMCPStoryPullRequestAdapter(_FastMCPAdapter):
         raise RuntimeError("PR creation requires lifecycle story_completion with implementation/test evidence.")
 
 
+class FastMCPStoryPrLaunchAdapter(_FastMCPAdapter):
+    """Draft PR for a branch already published; checks run in the story_pr_launch preflight."""
+
+    def preview_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        arguments = technical_arguments_for_capability("preview_story_pull_request", request)
+        return self.client.call("preview_story_pull_request", arguments)
+
+    def create_story_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        arguments = technical_arguments_for_capability("create_story_pull_request", request)
+        return self._execute("create_story_pull_request", arguments, request.get("execution_capability"))
+
+
+def _story_pull_requests(client: CapabilityClient, request: dict[str, Any], status: str) -> list[dict[str, Any]]:
+    arguments: dict[str, Any] = {"story_id": int(request["story_id"]), "status": status}
+    if request.get("repository_name"):
+        arguments["repository_name"] = request["repository_name"]
+    if request.get("source_target_branch"):
+        arguments["target_branch"] = request["source_target_branch"]
+    pull_requests = client.call("list_story_pull_requests", arguments).get("pull_requests")
+    return [item for item in pull_requests or [] if isinstance(item, dict)]
+
+
+def select_story_pull_request(
+    pull_requests: list[dict[str, Any]], pull_request_id: int | None, *, description: str,
+) -> dict[str, Any]:
+    if pull_request_id is not None:
+        matches = [item for item in pull_requests if item.get("pull_request_id") == int(pull_request_id)]
+    else:
+        matches = pull_requests
+    if len(matches) != 1:
+        raise ValueError(
+            f"Esperava exatamente 1 PR {description}, encontrei {len(matches)}; informe --pull-request-id."
+        )
+    return matches[0]
+
+
+class FastMCPStoryPrPublishAdapter(_FastMCPAdapter):
+    def preview_publish(self, request: dict[str, Any]) -> dict[str, Any]:
+        selected = select_story_pull_request(
+            _story_pull_requests(self.client, request, "active"), request.get("pull_request_id"),
+            description="ativa da história neste repositório",
+        )
+        if selected.get("is_draft") is not True:
+            raise ValueError(f"A PR {selected.get('pull_request_id')} já está publicada.")
+        if str(selected.get("merge_status") or "").lower() == "conflicts":
+            raise ValueError(f"A PR {selected.get('pull_request_id')} tem conflitos de merge; resolva antes.")
+        return {
+            "story_id": int(request["story_id"]),
+            "repository_name": selected["repository_name"],
+            "pull_request_id": selected["pull_request_id"],
+            "title": selected.get("title"),
+            "source_ref_name": selected.get("source_ref_name"),
+            "target_ref_name": selected.get("target_ref_name"),
+            "expected_source_commit": selected.get("source_commit_id"),
+            "web_url": selected.get("web_url"),
+            "merge_status": selected.get("merge_status"),
+        }
+
+    def publish_pull_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        arguments = technical_arguments_for_capability("publish_story_pull_request", request)
+        return self._execute("publish_story_pull_request", arguments, request.get("execution_capability"))
+
+
+class FastMCPStoryPrCherryPickAdapter(_FastMCPAdapter):
+    def list_candidate_pull_requests(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        return _story_pull_requests(self.client, request, "active")
+
+    def cherry_pick(self, request: dict[str, Any]) -> dict[str, Any]:
+        arguments = technical_arguments_for_capability("cherry_pick_story_pull_request", request)
+        return self._execute("cherry_pick_story_pull_request", arguments, request.get("execution_capability"))
+
+    def get_cherry_pick(self, repository_name: str, cherry_pick_id: int) -> dict[str, Any]:
+        return self.client.call(
+            "get_story_cherry_pick", {"repository_name": repository_name, "cherry_pick_id": int(cherry_pick_id)},
+        )
+
+
 class FastMCPStoryStatusTransitionAdapter(_FastMCPAdapter):
     def preview_story_status_transition(self, request: dict[str, Any]) -> dict[str, Any]:
         story_id = int(request["story_id"])
@@ -320,4 +420,4 @@ class FastMCPTaskClosureAdapter(_FastMCPAdapter):
             raise RuntimeError(
                 "Task closure requires an allowed approved preview."
             ) from error
-        return self._execute("update_work_item_effort", arguments, None)
+        return self._execute("update_work_item_effort", arguments, request.get("execution_capability"))

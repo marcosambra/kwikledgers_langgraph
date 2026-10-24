@@ -92,7 +92,8 @@ class ProcessConstraint(TypedDict):
 
 
 class CreationValidationError(ValueError):
-    pass
+    # Mensagens são nossas, sem dados externos; o engine pode expô-las ao operador.
+    safe_detail = True
 
 
 class TechnicalDebtLifecycleRequired(CreationValidationError):
@@ -100,27 +101,43 @@ class TechnicalDebtLifecycleRequired(CreationValidationError):
 
 
 class _CreationHTML(HTMLParser):
+    # Lista segura: sem atributos, sem aninhamento além de ul > li, texto só em p/h3/li.
+    TEXT_BLOCKS = ("p", "h3", "li")
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self.paragraph = False
+        self.stack: list[str] = []
         self.valid = True
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if attrs or (tag != "p" and not (tag == "br" and self.paragraph)) or (tag == "p" and self.paragraph):
+        if attrs:
             self.valid = False
-        if tag == "p":
-            self.paragraph = True
+        if tag == "br":
+            if not self.stack or self.stack[-1] not in self.TEXT_BLOCKS:
+                self.valid = False
+            self.parts.append("<br>")
+            return
+        if tag in ("p", "h3", "ul"):
+            if self.stack:
+                self.valid = False
+        elif tag == "li":
+            if self.stack != ["ul"]:
+                self.valid = False
+        else:
+            self.valid = False
+        self.stack.append(tag)
         self.parts.append(f"<{tag}>")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag != "p" or not self.paragraph:
+        if not self.stack or self.stack[-1] != tag:
             self.valid = False
-        self.paragraph = False
+        else:
+            self.stack.pop()
         self.parts.append(f"</{tag}>")
 
     def handle_data(self, data: str) -> None:
-        if data and not self.paragraph:
+        if data and (not self.stack or self.stack[-1] not in self.TEXT_BLOCKS):
             self.valid = False
         self.parts.append(escape(data, quote=False))
 
@@ -131,7 +148,7 @@ def format_creation_rich_text(value: str | None) -> str | None:
     parser = _CreationHTML()
     parser.feed(value)
     parser.close()
-    if parser.valid and not parser.paragraph and "".join(parser.parts) == value and value.startswith("<p>"):
+    if parser.valid and not parser.stack and "".join(parser.parts) == value and value.startswith("<"):
         return value
     return "<p>" + escape(value, quote=False).replace("\n", "<br>") + "</p>"
 
@@ -293,11 +310,11 @@ def _parent(client: Any, identifier: int, operator: dict[str, Any], child_kind: 
         raise CreationValidationError("Authoritative parent identity and positive native revision required")
     if project != operator["project"]:
         raise CreationValidationError("Parent project differs from operator project")
-    allowed_types = {operator["process_constraints"][WorkItemKind.USER_STORY.value]["native_type"]}
-    if child_kind == WorkItemKind.TASK.value:
-        allowed_types.add(operator["process_constraints"][WorkItemKind.BUG.value]["native_type"])
-    if kind not in allowed_types:
-        raise CreationValidationError("Parent must be an authorized native UserStory or, for Tasks, Bug")
+    # Task é sempre filha do pai informado, seja qual for o tipo dele.
+    if child_kind != WorkItemKind.TASK.value:
+        allowed_types = {operator["process_constraints"][WorkItemKind.USER_STORY.value]["native_type"]}
+        if kind not in allowed_types:
+            raise CreationValidationError(f"Parent must be an authorized native UserStory; got {kind!r}")
     return {"id": identity, "revision": revision, "work_item_type": kind, "project": project,
             "area_path": area, "iteration_path": iteration}
 

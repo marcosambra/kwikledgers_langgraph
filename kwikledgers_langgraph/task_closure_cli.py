@@ -6,8 +6,6 @@ from typing import Any
 
 from kwikledgers_langgraph.backend_factory import build_task_closure_ports, resolve_backend_name
 from kwikledgers_langgraph.guardrails import load_resume_confirmation
-from kwikledgers_langgraph.fastmcp_execution_capability import issue_execution_capability
-from kwikledgers_langgraph.lifecycle_adapters import active_state
 from kwikledgers_langgraph.observability import (
     append_runtime_observability_artifacts,
     build_observability_context,
@@ -167,18 +165,7 @@ def _write_state_file(state: dict[str, Any], state_file_path: str) -> None:
 def run_task_closure(arguments: argparse.Namespace) -> dict[str, Any]:
     backend_name = resolve_backend_name(getattr(arguments, "backend", None))
     state = _build_runtime_state(arguments)
-    execution_provider = None
-    if backend_name == "fastmcp":
-        execution_provider = lambda name, arguments: issue_execution_capability(
-            active_state("task_closure"),
-            action="task_closure.execute",
-            capability_name=name,
-            arguments=arguments,
-        )
-    runtime = build_task_closure_runtime(build_task_closure_ports(
-        backend_name=backend_name,
-        execution_capability_provider=execution_provider,
-    ))
+    runtime = build_task_closure_runtime(build_task_closure_ports(backend_name=backend_name))
     result = runtime.invoke(state)
     if not isinstance(result, dict):
         raise RuntimeError("O runtime de fechamento de task retornou um estado final invalido.")

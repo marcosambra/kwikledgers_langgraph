@@ -67,7 +67,7 @@ class DayEndEntryPointTestCase(unittest.TestCase):
                 self.assertIn(".", token)
                 adapter.return_value.send_notification.assert_called_once()
 
-    def test_cron_generator_is_native_preview_only_and_rejects_unsafe_environment_paths(self) -> None:
+    def test_cron_generator_is_native_automatic_and_rejects_unsafe_environment_paths(self) -> None:
         source = Path(__file__).resolve().parents[1] / "scripts" / "register-day-end-closure.sh"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -96,7 +96,8 @@ class DayEndEntryPointTestCase(unittest.TestCase):
             result = subprocess.run(["bash", str(script)], env=environment, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             scheduled = captured.read_text(encoding="utf-8")
-            self.assertIn("--backend fastmcp --dry-run", scheduled)
+            self.assertIn("--backend fastmcp --timezone", scheduled)
+            self.assertNotIn("--dry-run", scheduled)
             self.assertIn("KWIKLEDGERS_ROOT_DIR=", scheduled)
             self.assertIn("KWIKLEDGERS_FASTMCP_COMMAND=", scheduled)
             self.assertNotIn("agent/.env", scheduled)
